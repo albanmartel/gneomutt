@@ -22,6 +22,7 @@
 #define MACRO_DRAFT "gd"
 #define MACRO_ARCHIVES "ga"
 #define MACRO_TRASH "gt"
+#define MACRO_LOCALE "gl"
 
 #define KEY_DEL "d"
 #define KEY_NEXT "j"
@@ -96,12 +97,72 @@ void on_help_clicked(GtkButton *btn, gpointer user_data) {
     gtk_widget_destroy(dialog);
 }
 
+void on_stop_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    AppContext *ctx = (AppContext *)user_data;
+    
+    // 1. Envoyer la commande d'exécution immédiate (sans confirmation)
+    // On envoie : <exit> ou simplement la touche 'x' si bindée par défaut
+    // Pour être universel, on peut envoyer : :q!\n 
+    send_term_data(ctx->terminal, "\033:q!\n"); 
+
+    // 2. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la fenêtre
+    // Cela déclenchera la destruction du terminal et l'arrêt du programme
+    gtk_window_close(GTK_WINDOW(ctx->window));
+}
+
 gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data) {
-    (void)widget;
-    if (event->keyval == GDK_KEY_F1) {
-        on_help_clicked(NULL, user_data);
+    (void)widget; 
+    AppContext *ctx = (AppContext *)user_data;
+
+    /*--- CAS 1 si entrée clavier dans la barre de recherche ---*/ 
+    if (gtk_widget_has_focus(ctx->search_entry)) {
+        return FALSE; 
+    }
+
+
+    /* --- SURCHARGE DES TOUCHES FLÉCHÉES --- */
+    const char *cmd = NULL;
+
+    switch (event->keyval) {
+        case GDK_KEY_Left:
+            cmd = "k";      // Flèche Gauche -> Précédent
+            break;
+        case GDK_KEY_Right:
+            cmd = "j";      // Flèche Droite -> Suivant
+            break;
+        case GDK_KEY_Up:
+            cmd = "-";      // Flèche Haut -> Page précédente (ou action '-')
+            break;
+        case GDK_KEY_Down:
+            cmd = " ";      // Flèche Bas -> Espace (Page suivante / Lire)
+            break;
+    }
+
+    if (cmd && ctx->terminal) {
+        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), cmd, -1);
+        return TRUE; // On arrête le traitement ici pour cette touche
+    }
+
+    /*--- CAS 2. Gestion Ctrl + Q  et F1 ---*/
+    if ((event->state & GDK_CONTROL_MASK) && event->keyval == GDK_KEY_q) {
+        on_stop_clicked(NULL, ctx);
         return TRUE;
     }
+
+    // 3. REDIRECTION SYSTÉMATIQUE
+    // Si on n'est pas dans la recherche, on envoie TOUT au terminal
+    if (ctx->terminal && event->string) {
+        // On s'assure que le terminal a le focus interne
+        if (!gtk_widget_has_focus(ctx->terminal)) {
+            gtk_widget_grab_focus(ctx->terminal);
+        }
+
+        // On envoie la touche
+        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), event->string, -1);
+        return TRUE; // On "consomme" l'événement pour que GTK ne l'utilise pas pour les boutons
+    }
+
     return FALSE;
 }
 
@@ -110,59 +171,24 @@ void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
     if (system(CMD_SYNC) == -1) g_warning("Erreur sync");
 }
 
-// Précédent (Touche k ou Flèche haut)
-void on_prev_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "k");
-}
-
-// Suivant (Touche j ou Flèche bas)
-void on_next_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "j");
-}
-
-// Écrire un nouveau mail (Touche m)
-void on_write_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "m");
-}
-
-// Répondre (Touche r)
-void on_reply_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "r");
-}
-
-// Répondre à tous (Touche g)
-void on_reply_all_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "g");
-}
-
-// Supprimer (Touche d)
-void on_del_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    send_term_data(((AppContext *)user_data)->terminal, "d");
-}
-
-// Selectionner mail (Touche Enter)
-void on_enter_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    // On envoie simplement le caractère de saut de ligne
-    send_term_data(((AppContext *)user_data)->terminal, "\n");
-}
-
 void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
     AppContext *ctx = g_object_get_data(G_OBJECT(btn), "ctx");
     send_term_data(ctx->terminal, (const char *)macro_keys);
     gtk_widget_grab_focus(ctx->terminal);
 }
 
-void on_action_clicked(GtkButton *btn, gpointer key_str) {
-    AppContext *ctx = g_object_get_data(G_OBJECT(btn), "ctx");
-    send_term_data(ctx->terminal, (const char *)key_str);
-    gtk_widget_grab_focus(ctx->terminal);
+void on_action_clicked(GtkButton *btn, gpointer user_data) {
+    // 1. On récupère le contexte (soit via user_data, soit via l'objet)
+    AppContext *ctx = (AppContext *)user_data; 
+    
+    // 2. On récupère la touche stockée dans le bouton
+    const char *key = g_object_get_data(G_OBJECT(btn), "key-to-send");
+
+    if (ctx && ctx->terminal && key) {
+        send_term_data(ctx->terminal, key);
+        // Important pour garder le contrôle au clavier immédiatement
+        gtk_widget_grab_focus(ctx->terminal);
+    }
 }
 
 void on_search_clicked(GtkWidget *widget, gpointer user_data) {
@@ -195,129 +221,96 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
     gtk_widget_grab_focus(ctx->terminal);
 }
 
-void on_stop_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    AppContext *ctx = (AppContext *)user_data;
-    
-    // 1. Envoyer la commande d'exécution immédiate (sans confirmation)
-    // On envoie : <exit> ou simplement la touche 'x' si bindée par défaut
-    // Pour être universel, on peut envoyer : :q!\n 
-    send_term_data(ctx->terminal, "\033:q!\n"); 
-
-    // 2. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la fenêtre
-    // Cela déclenchera la destruction du terminal et l'arrêt du programme
-    gtk_window_close(GTK_WINDOW(ctx->window));
-}
-
 /* --- INITIALISATION UI --- */
 int init_gui(AppContext *ctx, GtkBuilder *builder) {
     GError *error = NULL;
-    // Chargement depuis la ressource au lieu du fichier
+
+    // 1. Chargement de l'interface
     if (!gtk_builder_add_from_resource(builder, "/com/monprojet/icons/interface.ui", &error)) {
         g_printerr("Erreur chargement interface : %s\n", error->message);
         g_error_free(error);
         return 0;
     }
 
+    // 2. Configuration de la fenêtre et de l'icône
     ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
-    GError *icon_error = NULL;
-    // On charge l'image depuis le chemin virtuel défini dans le XML
-    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource("/com/monprojet/icons/neomutt-icone.png", &icon_error);
+    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource("/com/monprojet/icons/neomutt-icone.png", NULL);
     if (pixbuf) {
         gtk_window_set_icon(GTK_WINDOW(ctx->window), pixbuf);
         g_object_unref(pixbuf);
-    } else {
-        g_warning("Impossible de charger l'icône : %s", icon_error->message);
-        g_error_free(icon_error);
     }
-    ctx->terminal = vte_terminal_new();
-    /* --- Bloc de recherche unique --- */
+
+    // 3. Récupération du terminal (Correction du plein écran)
+    ctx->terminal = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
+    gtk_widget_set_hexpand(ctx->terminal, TRUE);
+    gtk_widget_set_vexpand(ctx->terminal, TRUE);
+
+    // 4. Recherche
     ctx->search_entry = GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
     ctx->search_combo = GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
     GtkWidget *btn_search = GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
-    
-    if (btn_search && ctx->search_entry && ctx->search_combo) {
+    if (btn_search) {
         g_signal_connect(btn_search, "clicked", G_CALLBACK(on_search_clicked), ctx);
         g_signal_connect(ctx->search_entry, "activate", G_CALLBACK(on_search_clicked), ctx);
     }
-    
-    GtkWidget *hbox_body = GTK_WIDGET(gtk_builder_get_object(builder, "hbox_body"));
-    gtk_box_pack_start(GTK_BOX(hbox_body), ctx->terminal, TRUE, TRUE, 0);
 
-    // Signaux de base
+    // 5. Signaux système et Lancement NeoMutt
     g_signal_connect(ctx->terminal, "child-exited", G_CALLBACK(on_terminal_child_exited), ctx);
     g_signal_connect(ctx->window, "key-press-event", G_CALLBACK(on_key_press), ctx);
 
-    // Spawn NeoMutt
     vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL, 
-                             (char *[]){CMD_NEOMUTT, NULL}, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL, NULL, NULL);
+                             (char *[]){CMD_NEOMUTT, NULL}, NULL, G_SPAWN_SEARCH_PATH, 
+                             NULL, NULL, NULL, -1, NULL, NULL, NULL);
 
-/* --- LIAISON DOSSIERS (CORRIGÉ ET COMPLÉTÉ) --- */
-    const char *folders[][2] = {
-        {"btn_inbox",      MACRO_INBOX}, 
-        {"btn_sent",       MACRO_SENT}, 
-        {"btn_trash",      MACRO_TRASH},
-        {"btn_draft",      MACRO_DRAFT}, 
-        {"btn_quarantine", MACRO_QUAR}, 
-        {"btn_archives",   MACRO_ARCHIVES}
+    /* --- MUTUALISATION DES DOSSIERS --- */
+    struct { const char *id; const char *macro; } folders[] = {
+        {"btn_inbox", MACRO_INBOX}, {"btn_sent", MACRO_SENT}, {"btn_locale", MACRO_LOCALE},
+        {"btn_trash", MACRO_TRASH}, {"btn_draft", MACRO_DRAFT}, 
+        {"btn_quarantine", MACRO_QUAR}, {"btn_archives", MACRO_ARCHIVES}
     };
-
 
     for(size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
-        GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i][0]));
+        GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i].id));
         if(b) {
-            g_object_set_data(G_OBJECT(b), "ctx", ctx);
-            g_signal_connect(b, "clicked", G_CALLBACK(on_folder_clicked), (gpointer)folders[i][1]);
+            g_object_set_data(G_OBJECT(b), "ctx", ctx); // On attache le contexte au bouton
+            g_signal_connect(b, "clicked", G_CALLBACK(on_folder_clicked), (gpointer)folders[i].macro);
         }
     }
 
-    /* --- BOUTONS RACCOURCIS --- */
-    struct {
-        const char *id;
-        void (*callback)(GtkButton *, gpointer);
-    } buttons[] = {
-        {"btn_prev",      on_prev_clicked},
-        {"btn_next",      on_next_clicked},
-        {"btn_enter",     on_enter_clicked},
-        {"btn_write",     on_write_clicked},
-        {"btn_reply",     on_reply_clicked},
-        {"btn_reply_all", on_reply_all_clicked},
-        {"btn_del",       on_del_clicked},
-        {"btn_stop",      on_stop_clicked} // Votre bouton Quitter
+    /* --- MUTUALISATION DES RACCOURCIS (Utilise on_action_clicked) --- */
+    struct { const char *id; const char *key; } shortcuts[] = {
+        {"btn_prev", KEY_PREV}, {"btn_next", KEY_NEXT}, {"btn_enter", "\n"},
+        {"btn_write", KEY_WRITE}, {"btn_reply", KEY_REPLY}, 
+        {"btn_reply_all", KEY_REPLY_ALL}, {"btn_del", KEY_DEL}
     };
 
-    for (int i = 0; i < 7; i++) {
-        GObject *obj = gtk_builder_get_object(builder, buttons[i].id);
+    for (size_t i = 0; i < G_N_ELEMENTS(shortcuts); i++) {
+        GtkWidget *obj = GTK_WIDGET(gtk_builder_get_object(builder, shortcuts[i].id));
         if (obj) {
-            g_signal_connect(obj, "clicked", G_CALLBACK(buttons[i].callback), ctx);
-        } else {
-            g_print("Attention : bouton %s non trouvé dans le XML\n", buttons[i].id);
+            g_object_set_data(G_OBJECT(obj), "key-to-send", (gpointer)shortcuts[i].key);
+            g_signal_connect(obj, "clicked", G_CALLBACK(on_action_clicked), ctx);
         }
     }
 
-    // Boutons spéciaux
-    GtkWidget *btn_help = GTK_WIDGET(gtk_builder_get_object(builder, "btn_help"));
-    if(btn_help) g_signal_connect(btn_help, "clicked", G_CALLBACK(on_help_clicked), ctx);
+    /* --- BOUTONS SPÉCIAUX (Logique unique) --- */
+    struct { const char *id; GCallback cb; } special[] = {
+        {"btn_help", G_CALLBACK(on_help_clicked)},
+        {"btn_stop", G_CALLBACK(on_stop_clicked)},
+        {"btn_sync", G_CALLBACK(on_refresh_clicked)}
+    };
 
-    /* AUTRES BOUTONS */
-    GtkWidget *btn_stop = GTK_WIDGET(gtk_builder_get_object(builder, "btn_stop"));
-    if(btn_stop) {
-	g_signal_connect(btn_stop, "clicked", G_CALLBACK(on_stop_clicked), ctx);
+    for (size_t i = 0; i < G_N_ELEMENTS(special); i++) {
+        GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(builder, special[i].id));
+        if(btn) g_signal_connect(btn, "clicked", special[i].cb, ctx);
     }
 
-    // On branche aussi le bouton de synchronisation
-    GObject *btn_sync = gtk_builder_get_object(builder, "btn_sync");
-    if(btn_sync) g_signal_connect(btn_sync, "clicked", G_CALLBACK(on_refresh_clicked), ctx);
-
-    // --- FIN DE LA FONCTION ---
-
-    // On affiche tout
+    // 6. Affichage final
     gtk_widget_show_all(ctx->window);
-
-    // ON AJOUTE CECI ICI : La fenêtre s'ouvre en grand
     gtk_window_maximize(GTK_WINDOW(ctx->window));
 
-    gtk_widget_show_all(ctx->window);
+    /*--- Le terminal prend le focus ---*/
+    gtk_widget_grab_focus(ctx->terminal);
+
     return 1;
 }
 
