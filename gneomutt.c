@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include <stddef.h>
 #include <vte/vte.h>
 #include <sys/prctl.h>
 #include <stdlib.h>
@@ -66,12 +67,35 @@ typedef struct {
     GtkWidget *terminal;
     GtkWidget *search_entry;
     GtkWidget *search_combo;
+    GtkBuilder *builder;
 } AppContext;
 
 /* --- UTILITAIRES --- */
 void send_term_data(GtkWidget *terminal, const char *data) {
     if (!terminal) return;
     vte_terminal_feed_child(VTE_TERMINAL(terminal), data, -1);
+}
+
+void update_active_folder_ui(GtkWidget *active_button, GtkBuilder *builder) {
+    if (!GTK_IS_BUILDER(builder)) return;
+
+    const char *ids[] = {
+        "btn_inbox", "btn_sent", "btn_trash", "btn_draft", 
+        "btn_quarantine", "btn_archives", "btn_locale"
+    };
+    
+    for (size_t i = 0; i < G_N_ELEMENTS(ids); i++) {
+        GObject *obj = gtk_builder_get_object(builder, ids[i]);
+        if (obj) {
+            GtkStyleContext *style = gtk_widget_get_style_context(GTK_WIDGET(obj));
+            gtk_style_context_remove_class(style, "folder-active");
+        }
+    }
+    
+    if (active_button) {
+        GtkStyleContext *style = gtk_widget_get_style_context(active_button);
+        gtk_style_context_add_class(style, "folder-active");
+    }
 }
 
 /* --- CALLBACKS --- */
@@ -173,8 +197,16 @@ void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
 
 void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
     AppContext *ctx = g_object_get_data(G_OBJECT(btn), "ctx");
-    send_term_data(ctx->terminal, (const char *)macro_keys);
-    gtk_widget_grab_focus(ctx->terminal);
+    const char *macro = (const char *)macro_keys;
+
+    if (ctx && ctx->terminal && macro) {
+        send_term_data(ctx->terminal, macro);
+        
+        /* --- MISE À JOUR VISUELLE --- */
+        update_active_folder_ui(GTK_WIDGET(btn), ctx->builder);
+        
+        gtk_widget_grab_focus(ctx->terminal);
+    }
 }
 
 void on_action_clicked(GtkButton *btn, gpointer user_data) {
@@ -225,14 +257,31 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
 int init_gui(AppContext *ctx, GtkBuilder *builder) {
     GError *error = NULL;
 
-    // 1. Chargement de l'interface
+    ctx->builder = builder;
+
+    /*--- 0. STYLE CSS BOITE AUX LETTRES ACTIVES ---*/
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+        ".folder-active { "
+        "   background-color: #3584e4; " // Bleu GNOME
+        "   color: white; "
+        "   font-weight: bold; "
+        "   border-radius: 5px; "
+        "}", -1, NULL);
+
+    gtk_style_context_add_provider_for_screen(
+        gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    /*--- 1. Chargement de l'interface ---*/ 
     if (!gtk_builder_add_from_resource(builder, "/com/monprojet/icons/interface.ui", &error)) {
         g_printerr("Erreur chargement interface : %s\n", error->message);
         g_error_free(error);
         return 0;
     }
 
-    // 2. Configuration de la fenêtre et de l'icône
+    /*--- 2. Configuration de la fenêtre et de l'icône ---*/
     ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource("/com/monprojet/icons/neomutt-icone.png", NULL);
     if (pixbuf) {
@@ -240,12 +289,12 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         g_object_unref(pixbuf);
     }
 
-    // 3. Récupération du terminal (Correction du plein écran)
+    /*--- 3. Récupération du terminal (Correction du plein écran) ---*/
     ctx->terminal = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
     gtk_widget_set_hexpand(ctx->terminal, TRUE);
     gtk_widget_set_vexpand(ctx->terminal, TRUE);
 
-    // 4. Recherche
+    /*--- 4. Recherche ---*/
     ctx->search_entry = GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
     ctx->search_combo = GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
     GtkWidget *btn_search = GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
@@ -254,7 +303,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         g_signal_connect(ctx->search_entry, "activate", G_CALLBACK(on_search_clicked), ctx);
     }
 
-    // 5. Signaux système et Lancement NeoMutt
+    /*--- 5. Signaux système et Lancement NeoMutt ---*/
     g_signal_connect(ctx->terminal, "child-exited", G_CALLBACK(on_terminal_child_exited), ctx);
     g_signal_connect(ctx->window, "key-press-event", G_CALLBACK(on_key_press), ctx);
 
@@ -292,6 +341,12 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         }
     }
 
+    /*--- Forces L'état actif sur INBOX au démarrage ---*/
+    GtkWidget *btn_inbox = GTK_WIDGET(gtk_builder_get_object(builder, "btn_inbox"));
+    if (btn_inbox) {
+        update_active_folder_ui(btn_inbox, builder); // Utilise l'argument builder direct
+    }
+
     /* --- BOUTONS SPÉCIAUX (Logique unique) --- */
     struct { const char *id; GCallback cb; } special[] = {
         {"btn_help", G_CALLBACK(on_help_clicked)},
@@ -304,7 +359,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         if(btn) g_signal_connect(btn, "clicked", special[i].cb, ctx);
     }
 
-    // 6. Affichage final
+    /*--- 6. Affichage final ---*/
     gtk_widget_show_all(ctx->window);
     gtk_window_maximize(GTK_WINDOW(ctx->window));
 
@@ -336,6 +391,9 @@ int main(int argc, char *argv[]) {
         g_object_unref(builder);
         return 1;
     }
+    
+    // 6. Boucle principale
+    gtk_main();
 
     /* * Note : Une fois que init_gui a extrait les widgets (window, terminal, etc.)
      * et les a stockés dans 'ctx', le builder n'est plus nécessaire.
@@ -343,8 +401,6 @@ int main(int argc, char *argv[]) {
      */
     g_object_unref(builder);
 
-    // 6. Boucle principale
-    gtk_main();
 
     return 0;
 }
