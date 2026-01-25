@@ -168,17 +168,47 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkComboBoxText" id="search_options_combo">
+                  <object class="GtkBox" id="search_controls_box">
                     <property name="visible">True</property>
                     <property name="can-focus">False</property>
-                    <property name="tooltip-text" translatable="yes">Choix de recherche</property>
-                    <property name="active">0</property>
-                    <items>
-                      <item id="gen" translatable="yes">Général</item>
-                      <item id="from" translatable="yes">Expéditeur</item>
-                      <item id="sub" translatable="yes">Objet</item>
-                      <item id="sub" translatable="yes">Date</item>
-                    </items>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkComboBoxText" id="search_options_combo">
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="tooltip-text" translatable="yes">Rechercher dans...</property>
+                        <property name="active">0</property>
+                        <items>
+                          <item id="gen" translatable="yes">Général</item>
+                          <item id="from" translatable="yes">Expéditeur</item>
+                          <item id="sub" translatable="yes">Objet</item>
+                        </items>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkComboBoxText" id="date_search_combo">
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="tooltip-text" translatable="yes">Filtrer par date</property>
+                        <property name="active">0</property>
+                        <items>
+                          <item id="any" translatable="yes">Toutes les dates</item>
+                          <item id="today" translatable="yes">Aujourd'hui</item>
+                          <item id="week" translatable="yes">7 derniers jours</item>
+                          <item id="month" translatable="yes">Ce mois-ci</item>
+                        </items>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -249,7 +279,7 @@
                 <property name="can-focus">False</property>
                 <property name="border-width">5</property>
                 <property name="orientation">vertical</property>
-                <property name="spacing">5</property>
+                <property name="spacing">4</property>
                 <child>
                   <object class="GtkButton" id="btn_inbox">
                     <property name="label" translatable="yes">📥</property>
@@ -389,18 +419,27 @@
               </packing>
             </child>
             <child>
-              <object class="VteTerminal" id="terminal">
-                <property name="name">terminal</property>
+              <object class="GtkFrame" id="terminal_frame">
                 <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="encoding">UTF-8</property>
-                <property name="scrollback-lines">4294967295</property>
-                <property name="scroll-on-keystroke">True</property>
-                <property name="scroll-on-output">False</property>
+                <property name="can-focus">False</property>
+                <property name="label-xalign">0</property>
+                <property name="shadow-type">in</property>
+                <child>
+                  <object class="VteTerminal" id="terminal">
+                    <property name="name">terminal</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="encoding">UTF-8</property>
+                    <property name="scrollback-lines">10000</property>
+                    <property name="scroll-on-keystroke">True</property>
+                    <property name="scroll-on-output">False</property>
+                  </object>
+                </child>
               </object>
               <packing>
                 <property name="expand">True</property>
                 <property name="fill">True</property>
+                <property name="padding">4</property>
                 <property name="position">1</property>
               </packing>
             </child>
@@ -408,6 +447,7 @@
           <packing>
             <property name="expand">True</property>
             <property name="fill">True</property>
+            <property name="padding">4</property>
             <property name="position">1</property>
           </packing>
         </child>
