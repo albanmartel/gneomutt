@@ -32,6 +32,12 @@
 #define KEY_REPLY "r"
 #define KEY_REPLY_ALL "g"
 
+/*--- Taille tableau des pointeurs de dossiers ---*/
+#define NB_FOLDERS 7
+
+#define ERR_SYNC "Erreur sync"
+#define ERR_BUILDER "Erreur fatale : impossible d'initialiser l'interface.\n"
+
 const char *HELP_TEXT = 
 "GUIDE DE RÉFÉRENCE NEOMUTT\n"
 "==========================\n\n"
@@ -67,8 +73,22 @@ typedef struct {
     GtkWidget *terminal;
     GtkWidget *search_entry;
     GtkWidget *search_combo;
-    GtkBuilder *builder;
+    GtkWidget *date_combo;
+    GtkWidget *folder_buttons[NB_FOLDERS];
 } AppContext;
+
+/* --- CONFIGURATION DES TOUCHES (Arrow Keys Mapping) --- */
+typedef struct {
+    guint keyval;        // La touche pressée (ex: GDK_KEY_Left)
+    const char *command; // La commande envoyée à NeoMutt (ex: "k")
+} KeyMapping;
+
+static const KeyMapping arrow_map[] = {
+    {GDK_KEY_Left,  "k"},   // Left Arrow
+    {GDK_KEY_Right, "j"},   // Right Arrow
+    {GDK_KEY_Up,    "-"},   // Up Arrow
+    {GDK_KEY_Down,  " "}    // Down Arrow (Space)
+};
 
 /* --- UTILITAIRES --- */
 void send_term_data(GtkWidget *terminal, const char *data) {
@@ -76,18 +96,13 @@ void send_term_data(GtkWidget *terminal, const char *data) {
     vte_terminal_feed_child(VTE_TERMINAL(terminal), data, -1);
 }
 
-void update_active_folder_ui(GtkWidget *active_button, GtkBuilder *builder) {
-    if (!GTK_IS_BUILDER(builder)) return;
+void update_active_folder_ui(GtkWidget *active_button, AppContext *ctx) {
+    if (!ctx) return;
 
-    const char *ids[] = {
-        "btn_inbox", "btn_sent", "btn_trash", "btn_draft", 
-        "btn_quarantine", "btn_archives", "btn_locale"
-    };
-    
-    for (size_t i = 0; i < G_N_ELEMENTS(ids); i++) {
-        GObject *obj = gtk_builder_get_object(builder, ids[i]);
-        if (obj) {
-            GtkStyleContext *style = gtk_widget_get_style_context(GTK_WIDGET(obj));
+    // G_N_ELEMENTS calcule automatiquement le nombre de cases du tableau
+    for (size_t i = 0; i < G_N_ELEMENTS(ctx->folder_buttons); i++) {
+        if (ctx->folder_buttons[i]) {
+            GtkStyleContext *style = gtk_widget_get_style_context(ctx->folder_buttons[i]);
             gtk_style_context_remove_class(style, "folder-active");
         }
     }
@@ -148,24 +163,18 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data)
     /* --- SURCHARGE DES TOUCHES FLÉCHÉES --- */
     const char *cmd = NULL;
 
-    switch (event->keyval) {
-        case GDK_KEY_Left:
-            cmd = "k";      // Flèche Gauche -> Précédent
-            break;
-        case GDK_KEY_Right:
-            cmd = "j";      // Flèche Droite -> Suivant
-            break;
-        case GDK_KEY_Up:
-            cmd = "-";      // Flèche Haut -> Page précédente (ou action '-')
-            break;
-        case GDK_KEY_Down:
-            cmd = " ";      // Flèche Bas -> Espace (Page suivante / Lire)
-            break;
+    /* Associer le tableau de configuration aux nouveaux raccourci clavier */
+    for (size_t i = 0; i < G_N_ELEMENTS(arrow_map); i++) {
+        if (event->keyval == arrow_map[i].keyval) {
+            cmd = arrow_map[i].command;
+            break; // On a trouvé la correspondance, on sort de la boucle
+        }
     }
 
+    /* Vérification du cmd et de la présence du terminal */
     if (cmd && ctx->terminal) {
         vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), cmd, -1);
-        return TRUE; // On arrête le traitement ici pour cette touche
+        return TRUE; 
     }
 
     /*--- CAS 2. Gestion Ctrl + Q  et F1 ---*/
@@ -192,7 +201,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 
 void on_refresh_clicked(GtkButton *btn, gpointer user_data) { 
     (void)btn; (void)user_data;
-    if (system(CMD_SYNC) == -1) g_warning("Erreur sync");
+    if (system(CMD_SYNC) == -1) g_warning(ERR_SYNC);
 }
 
 void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
@@ -203,7 +212,7 @@ void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
         send_term_data(ctx->terminal, macro);
         
         /* --- MISE À JOUR VISUELLE --- */
-        update_active_folder_ui(GTK_WIDGET(btn), ctx->builder);
+        update_active_folder_ui(GTK_WIDGET(btn), ctx);
         
         gtk_widget_grab_focus(ctx->terminal);
     }
@@ -226,29 +235,36 @@ void on_action_clicked(GtkButton *btn, gpointer user_data) {
 void on_search_clicked(GtkWidget *widget, gpointer user_data) {
     (void)widget;
     AppContext *ctx = (AppContext *)user_data;
+    
     const char *text = gtk_entry_get_text(GTK_ENTRY(ctx->search_entry));
-    if (!text || strlen(text) == 0) return;
     const char *option = gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->search_combo));
+    const char *date_id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->date_combo));
 
-    // --- NOUVELLE SÉQUENCE SÉCURISÉE ---
-    // 1. \007 : Annule tout (Ctrl-G)
-    // 2. :    : Ouvre la ligne de commande NeoMutt
-    // 3. exec vfolder-from-query : La commande que vous avez validée
-    // 4. \n   : Valide l'ouverture de la recherche
-    send_term_data(ctx->terminal, "\007:exec vfolder-from-query\n");
+    // Si tout est vide, on ne fait rien
+    if ((!text || strlen(text) == 0) && (g_strcmp0(date_id, "any") == 0)) return;
 
-    // 5. On envoie les critères Notmuch
-    if (g_strcmp0(option, "from") == 0) {
-        send_term_data(ctx->terminal, "from:");
-    } else if (g_strcmp0(option, "sub") == 0) {
-        send_term_data(ctx->terminal, "subject:");
+    // 1. Lancement de Notmuch
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\007:exec vfolder-from-query\n", -1);
+
+    // 2. Construction de la requête Notmuch complexe
+    if (date_id && g_strcmp0(date_id, "any") != 0) {
+        if (g_strcmp0(date_id, "today") == 0)      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:today ", -1);
+        else if (g_strcmp0(date_id, "week") == 0)  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:7d.. ", -1);
+        else if (g_strcmp0(date_id, "month") == 0) vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:1m.. ", -1);
     }
 
-    // 6. On envoie le texte et on valide la recherche finale
-    send_term_data(ctx->terminal, text);
-    send_term_data(ctx->terminal, "\n");
+    // 3. Préfixe de champ (from: ou subject:)
+    if (g_strcmp0(option, "from") == 0) {
+        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "from:", -1);
+    } else if (g_strcmp0(option, "sub") == 0) {
+        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "subject:", -1);
+    }
 
-    // Nettoyage et focus
+    // 4. Texte et validation finale
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), text, -1);
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\n", -1);
+
+    // Reset UI
     gtk_entry_set_text(GTK_ENTRY(ctx->search_entry), "");
     gtk_widget_grab_focus(ctx->terminal);
 }
@@ -257,31 +273,40 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
 int init_gui(AppContext *ctx, GtkBuilder *builder) {
     GError *error = NULL;
 
-    ctx->builder = builder;
+    // CHANGEMENT 1 : Supprimez ou commentez la ligne ctx->builder = builder;
+    // ctx->builder = builder; 
 
-    /*--- 0. STYLE CSS BOITE AUX LETTRES ACTIVES ---*/
+    /*--- 0. STYLE CSS ---*/
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider,
-        ".folder-active { "
-        "   background-color: #3584e4; " // Bleu GNOME
-        "   color: white; "
-        "   font-weight: bold; "
-        "   border-radius: 5px; "
+        /* Vos styles existants pour les boutons */
+        ".folder-active { background-color: #3584e4; color: white; border-radius: 5px; } "
+        
+        /* Le cadre autour du terminal */
+        "#terminal_frame { "
+        "   border: 2px solid #454545; " /* Couleur de la bordure */
+        "   background-color: #1a1a1a; " /* Doit correspondre au fond de NeoMutt */
+        "   margin: 2px; "               /* Espace extérieur au cadre */
+        "} "
+        
+        /* Suppression des bordures internes du terminal */
+        "vte-terminal { "
+        "   padding: 30px; "
+        "   background-color: #3584e4; "
         "}", -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+        GTK_STYLE_PROVIDER(provider), 
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
 
-    gtk_style_context_add_provider_for_screen(
-        gdk_screen_get_default(),
-        GTK_STYLE_PROVIDER(provider),
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-
-    /*--- 1. Chargement de l'interface ---*/ 
+    /*--- 1. Chargement ---*/ 
     if (!gtk_builder_add_from_resource(builder, "/com/monprojet/icons/interface.ui", &error)) {
         g_printerr("Erreur chargement interface : %s\n", error->message);
         g_error_free(error);
         return 0;
     }
 
-    /*--- 2. Configuration de la fenêtre et de l'icône ---*/
+    /*--- 2. Fenêtre et Icône ---*/
     ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_resource("/com/monprojet/icons/neomutt-icone.png", NULL);
     if (pixbuf) {
@@ -289,27 +314,30 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         g_object_unref(pixbuf);
     }
 
-    /*--- 3. Récupération du terminal (Correction du plein écran) ---*/
+    /*--- 3. Terminal ---*/
     ctx->terminal = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
     gtk_widget_set_hexpand(ctx->terminal, TRUE);
     gtk_widget_set_vexpand(ctx->terminal, TRUE);
+    gtk_widget_set_halign(ctx->terminal, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(ctx->terminal, GTK_ALIGN_FILL);
+    /*--- Force le terminal à ne pas réserver d'espace pour des caractères incomplets */
+    vte_terminal_set_scroll_on_output(VTE_TERMINAL(ctx->terminal), TRUE);
 
     /*--- 4. Recherche ---*/
     ctx->search_entry = GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
     ctx->search_combo = GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
+    ctx->date_combo = GTK_WIDGET(gtk_builder_get_object(builder, "date_search_combo"));
+
     GtkWidget *btn_search = GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
     if (btn_search) {
         g_signal_connect(btn_search, "clicked", G_CALLBACK(on_search_clicked), ctx);
         g_signal_connect(ctx->search_entry, "activate", G_CALLBACK(on_search_clicked), ctx);
     }
 
-    /*--- 5. Signaux système et Lancement NeoMutt ---*/
+    /*--- 5. Signaux et Spawn ---*/
     g_signal_connect(ctx->terminal, "child-exited", G_CALLBACK(on_terminal_child_exited), ctx);
     g_signal_connect(ctx->window, "key-press-event", G_CALLBACK(on_key_press), ctx);
-
-    vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL, 
-                             (char *[]){CMD_NEOMUTT, NULL}, NULL, G_SPAWN_SEARCH_PATH, 
-                             NULL, NULL, NULL, -1, NULL, NULL, NULL);
+    vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL, (char *[]){CMD_NEOMUTT, NULL}, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL, NULL, NULL);
 
     /* --- MUTUALISATION DES DOSSIERS --- */
     struct { const char *id; const char *macro; } folders[] = {
@@ -320,19 +348,21 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
 
     for(size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
         GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i].id));
+        
+        // CHANGEMENT 2 : On stocke l'adresse du bouton dans notre tableau persistant
+        ctx->folder_buttons[i] = b; 
+        
         if(b) {
-            g_object_set_data(G_OBJECT(b), "ctx", ctx); // On attache le contexte au bouton
+            g_object_set_data(G_OBJECT(b), "ctx", ctx);
             g_signal_connect(b, "clicked", G_CALLBACK(on_folder_clicked), (gpointer)folders[i].macro);
         }
     }
 
-    /* --- MUTUALISATION DES RACCOURCIS (Utilise on_action_clicked) --- */
+    /* --- MUTUALISATION DES RACCOURCIS --- */
     struct { const char *id; const char *key; } shortcuts[] = {
         {"btn_prev", KEY_PREV}, {"btn_next", KEY_NEXT}, {"btn_enter", "\n"},
-        {"btn_write", KEY_WRITE}, {"btn_reply", KEY_REPLY}, 
-        {"btn_reply_all", KEY_REPLY_ALL}, {"btn_del", KEY_DEL}
+        {"btn_write", KEY_WRITE}, {"btn_reply", KEY_REPLY}, {"btn_reply_all", KEY_REPLY_ALL}, {"btn_del", KEY_DEL}
     };
-
     for (size_t i = 0; i < G_N_ELEMENTS(shortcuts); i++) {
         GtkWidget *obj = GTK_WIDGET(gtk_builder_get_object(builder, shortcuts[i].id));
         if (obj) {
@@ -341,19 +371,17 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
         }
     }
 
-    /*--- Forces L'état actif sur INBOX au démarrage ---*/
-    GtkWidget *btn_inbox = GTK_WIDGET(gtk_builder_get_object(builder, "btn_inbox"));
-    if (btn_inbox) {
-        update_active_folder_ui(btn_inbox, builder); // Utilise l'argument builder direct
+    // CHANGEMENT 3 : On active visuellement l'Inbox en utilisant le tableau, sans le builder
+    if (ctx->folder_buttons[0]) {
+        update_active_folder_ui(ctx->folder_buttons[0], ctx);
     }
 
-    /* --- BOUTONS SPÉCIAUX (Logique unique) --- */
+    /* --- BOUTONS SPÉCIAUX --- */
     struct { const char *id; GCallback cb; } special[] = {
         {"btn_help", G_CALLBACK(on_help_clicked)},
         {"btn_stop", G_CALLBACK(on_stop_clicked)},
         {"btn_sync", G_CALLBACK(on_refresh_clicked)}
     };
-
     for (size_t i = 0; i < G_N_ELEMENTS(special); i++) {
         GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(builder, special[i].id));
         if(btn) g_signal_connect(btn, "clicked", special[i].cb, ctx);
@@ -362,13 +390,10 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     /*--- 6. Affichage final ---*/
     gtk_widget_show_all(ctx->window);
     gtk_window_maximize(GTK_WINDOW(ctx->window));
-
-    /*--- Le terminal prend le focus ---*/
     gtk_widget_grab_focus(ctx->terminal);
 
     return 1;
 }
-
 /* --- MAIN --- */
 int main(int argc, char *argv[]) {
     // 1. Nommer le processus (utile pour 'top' ou 'ps')
@@ -387,19 +412,18 @@ int main(int argc, char *argv[]) {
 
     // 5. Chargement de l'interface
     if (!init_gui(&ctx, builder)) {
-        g_printerr("Erreur fatale : impossible d'initialiser l'interface.\n");
+        g_printerr(ERR_BUILDER);
         g_object_unref(builder);
         return 1;
     }
+
+    /** Libération du builder MAINTENANT
+    * L'interface GTK reste en vie
+    * car ctx contient les pointeurs directs. */
+    g_object_unref(builder);
     
     // 6. Boucle principale
     gtk_main();
-
-    /* * Note : Une fois que init_gui a extrait les widgets (window, terminal, etc.)
-     * et les a stockés dans 'ctx', le builder n'est plus nécessaire.
-     * Les widgets eux-mêmes restent en mémoire car ils appartiennent à la fenêtre parente.
-     */
-    g_object_unref(builder);
 
 
     return 0;
