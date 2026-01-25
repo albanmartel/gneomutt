@@ -3,6 +3,10 @@ CC = clang
 # On passe en -O3 pour une optimisation maximale
 CFLAGS = -Wall -Wextra -O3
 
+# Définition des dossiers d'installation (Manquants précédemment)
+PREFIX = /usr/local
+BINDIR = $(PREFIX)/bin
+
 # Séparation des drapeaux pour plus de clarté
 GTK_CFLAGS = $(shell pkg-config --cflags gtk+-3.0 vte-2.91)
 GTK_LIBS   = $(shell pkg-config --libs gtk+-3.0 vte-2.91)
@@ -24,36 +28,33 @@ all: $(TARGET)
 $(RES_SRC): $(RES_XML)
 	glib-compile-resources $(RES_XML) --target=$(RES_SRC) --generate-source
 
-# 2. Règle de compilation principale (inclut désormais RES_SRC)
+# 2. Règle de compilation principale
 $(TARGET): $(SRC) $(RES_SRC)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_LIBS)
 
-# Vérifie si tous les outils nécessaires sont installés sur le système
+# Vérifie si tous les outils nécessaires sont installés
 check-deps:
 	@echo "Vérification des dépendances système..."
 	@$(foreach bin,$(DEPENDENCIES),\
 		which $(bin) > /dev/null 2>&1 || (echo "ERREUR: '$(bin)' n'est pas installé."; exit 1);)
-	@echo "Toutes les dépendances sont présentes."
+	@echo "Toutes les dépendances sont présentes." [cite: 3]
 
-# Règle Debug : compile avec les symboles de débogage et sans optimisation
+# Règle Debug : Correction de $(GTK_FLAGS) en $(GTK_CFLAGS) $(GTK_LIBS) 
 debug: clean
-	$(CC) $(CFLAGS) -g -Og $(SRC) -o $(TARGET) $(GTK_FLAGS)
-	@echo "Mode Debug activé. Utilisez 'gdb ./$(TARGET)' pour déboguer."
+	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_CFLAGS) $(GTK_LIBS)
+	@echo "Mode Debug activé. Utilisez 'gdb ./$(TARGET)' pour déboguer." 
 
-# Règle Test : vérifie si les fichiers nécessaires sont présents avant de lancer
+# Règle Test : Correction des indentations (Tabulations) 
 test: all
-@echo "--- Vérification des dépendances ---"
-	@# 1. Vérification des outils externes
+	@echo "--- Vérification des dépendances ---"
 	@$(foreach bin,$(DEPENDENCIES),\
-		command -v $(bin) >/dev/null 2>&1 || { echo "ERREUR: L'outil '$(bin)' est introuvable. Installez-le avec pacman."; exit 1; })
-			@echo "Vérification des dépendances..."
-	@# 2. Vérification des fichiers sources critiques (pour le développement)
+		command -v $(bin) >/dev/null 2>&1 || { echo "ERREUR: L'outil '$(bin)' est introuvable. Installez-le."; exit 1; })
+	@echo "Vérification des fichiers sources..."
 	@test -f $(RES_XML) || (echo "ERREUR: Fichier $(RES_XML) manquant"; exit 1)
-	
 	@echo "--- Configuration OK. Lancement de $(TARGET) ---"
 	./$(TARGET)
 
-# Règle Help : affiche l'aide du Makefile
+# Règle Help
 help:
 	@echo "Usage: make [RÈGLE]"
 	@echo ""
@@ -63,15 +64,14 @@ help:
 	@echo "  debug     : Compile pour le débogage (gdb/valgrind)"
 	@echo "  test      : Vérifie l'environnement et lance l'app"
 	@echo "  run       : Compile et lance l'application"
-	@echo "  install   : Installe le binaire dans $(BINDIR) (besoin de sudo)"
+	@echo "  install   : Installe le binaire dans $(BINDIR)"
 	@echo "  uninstall : Supprime le binaire du système"
 	@echo "  clean     : Supprime le binaire local"
-	@echo "  help      : Affiche ce message"
 
 install: all
-	@echo "Vérification des droits d'administration..."
+	@echo "Vérification des droits d'administration..." 
 	sudo install -Dm755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
-	@echo "Installation de $(TARGET) réussie dans $(BINDIR)."
+	@echo "Installation de $(TARGET) réussie dans $(BINDIR)." 
 
 uninstall:
 	@echo "Vérification des droits d'administration..."
