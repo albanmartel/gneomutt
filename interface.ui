@@ -3,10 +3,6 @@
 <interface>
   <requires lib="gtk+" version="3.20"/>
   <requires lib="vte-2.91" version="0.82"/>
-  <object class="VteTerminal" id="terminal">
-    <property name="visible">True</property>
-    <property name="can-focus">True</property>
-  </object>
   <object class="GtkWindow" id="window">
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">NeoMutt - alban.f.j.martel@laposte.net</property>
@@ -32,6 +28,7 @@
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text" translatable="yes">Synchroniser</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -42,10 +39,12 @@
             <child>
               <object class="GtkButton" id="btn_prev">
                 <property name="label">⬆️</property>
+                <property name="name">previous</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Précédent</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -56,10 +55,12 @@
             <child>
               <object class="GtkButton" id="btn_next">
                 <property name="label">⬇️</property>
+                <property name="name">next</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Suivant</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -70,10 +71,12 @@
             <child>
               <object class="GtkButton" id="btn_enter">
                 <property name="label">✅</property>
+                <property name="name">select</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
-                <property name="tooltip-text">Valider (Entrée</property>
+                <property name="tooltip-text">Selection</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -84,10 +87,12 @@
             <child>
               <object class="GtkButton" id="btn_reply">
                 <property name="label">↪️</property>
+                <property name="name">reply</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Répondre</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -98,10 +103,12 @@
             <child>
               <object class="GtkButton" id="btn_reply_all">
                 <property name="label">👨‍👩‍👧‍👦</property>
+                <property name="name">groupe</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Répondre à tous</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -112,9 +119,11 @@
             <child>
               <object class="GtkButton" id="btn_stop">
                 <property name="label" translatable="yes">🛑</property>
+                <property name="name">quit</property>
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="receives-default">False</property>
+                <property name="tooltip-text">Quitter</property>
                 <signal name="clicked" handler="on_stop_clicked" swapped="no"/>
               </object>
               <packing>
@@ -127,10 +136,12 @@
             <child>
               <object class="GtkButton" id="btn_write">
                 <property name="label">✍️</property>
+                <property name="name">write</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Écrire</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -166,6 +177,7 @@
                       <item id="gen" translatable="yes">Général</item>
                       <item id="from" translatable="yes">Expéditeur</item>
                       <item id="sub" translatable="yes">Objet</item>
+                      <item id="sub" translatable="yes">Date</item>
                     </items>
                   </object>
                   <packing>
@@ -207,10 +219,12 @@
             <child>
               <object class="GtkButton" id="btn_del">
                 <property name="label">❌</property>
+                <property name="name">delete</property>
                 <property name="visible">True</property>
                 <property name="can-focus">True</property>
                 <property name="receives-default">False</property>
                 <property name="tooltip-text">Supprimer</property>
+                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -267,6 +281,21 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_locale">
+                    <property name="label" translatable="yes">💻</property>
+                    <property name="name">trash</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Dossier Local</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">2</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_draft">
                     <property name="label" translatable="yes">🛠️</property>
                     <property name="name">drafts</property>
@@ -278,7 +307,7 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">2</property>
+                    <property name="position">3</property>
                   </packing>
                 </child>
                 <child>
@@ -289,21 +318,6 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text" translatable="yes">Archives</property>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">3</property>
-                  </packing>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_quarantine">
-                    <property name="label" translatable="yes">⚠️</property>
-                    <property name="name">quarantaine</property>
-                    <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Quarantaine</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -323,6 +337,21 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_quarantine">
+                    <property name="label" translatable="yes">⚠️</property>
+                    <property name="name">quarantaine</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Quarantaine</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">6</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_trash">
                     <property name="label" translatable="yes">🗑️</property>
                     <property name="name">trash</property>
@@ -334,12 +363,13 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">6</property>
+                    <property name="position">7</property>
                   </packing>
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_help">
                     <property name="label" translatable="yes">❓</property>
+                    <property name="name">help</property>
                     <property name="visible">True</property>
                     <property name="can-focus">False</property>
                     <property name="receives-default">False</property>
@@ -348,7 +378,7 @@
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">7</property>
+                    <property name="position">8</property>
                   </packing>
                 </child>
               </object>
@@ -359,7 +389,20 @@
               </packing>
             </child>
             <child>
-              <placeholder/>
+              <object class="VteTerminal" id="terminal">
+                <property name="name">terminal</property>
+                <property name="visible">True</property>
+                <property name="can-focus">True</property>
+                <property name="encoding">UTF-8</property>
+                <property name="scrollback-lines">4294967295</property>
+                <property name="scroll-on-keystroke">True</property>
+                <property name="scroll-on-output">False</property>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
             </child>
           </object>
           <packing>
