@@ -8,8 +8,8 @@ PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
 
 # Séparation des drapeaux pour plus de clarté
-GTK_CFLAGS = $(shell pkg-config --cflags gtk+-3.0 vte-2.91)
-GTK_LIBS   = $(shell pkg-config --libs gtk+-3.0 vte-2.91)
+CFLAGS += $(shell pkg-config --cflags gtk+-3.0 vte-2.91 webkit2gtk-4.0)
+LIBS += $(shell pkg-config --libs gtk+-3.0 vte-2.91 webkit2gtk-4.0)
 
 SRC = gneomutt.c
 RES_XML = resources.xml
@@ -30,7 +30,7 @@ $(RES_SRC): $(RES_XML)
 
 # 2. Règle de compilation principale
 $(TARGET): $(SRC) $(RES_SRC)
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_LIBS)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LIBS)
 
 # Vérifie si tous les outils nécessaires sont installés
 check-deps:
@@ -39,9 +39,9 @@ check-deps:
 		which $(bin) > /dev/null 2>&1 || (echo "ERREUR: '$(bin)' n'est pas installé."; exit 1);)
 	@echo "Toutes les dépendances sont présentes." [cite: 3]
 
-# Règle Debug : Correction de $(GTK_FLAGS) en $(GTK_CFLAGS) $(GTK_LIBS) 
+# Règle Debug : Correction de $(GTK_FLAGS) en $(GTK_CFLAGS) $(LIBS) 
 debug: clean
-	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_CFLAGS) $(GTK_LIBS)
+	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_CFLAGS) $(LIBS)
 	@echo "Mode Debug activé. Utilisez 'gdb ./$(TARGET)' pour déboguer." 
 
 # Règle Test : Correction des indentations (Tabulations) 
