@@ -3,13 +3,25 @@ CC = clang
 # On passe en -O3 pour une optimisation maximale
 CFLAGS = -Wall -Wextra -O3
 
-# Définition des dossiers d'installation (Manquants précédemment)
+# 1. Détection dynamique des paquets
+GTK_PKG = gtk+-3.0
+VTE_PKG = $(shell pkg-config --list-all | grep vte | cut -d' ' -f1 | head -n 1)
+# Pour WebKitGTK sous GTK3, c'est généralement webkit2gtk-4.0 ou 4.1
+WEBKIT_PKG = $(shell pkg-config --list-all | grep webkit2gtk | cut -d' ' -f1 | head -n 1)
+
+# Liste consolidée
+PKGS = $(GTK_PKG) $(VTE_PKG) $(WEBKIT_PKG)
+
+# 2. Récupération des drapeaux via pkg-config
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
 
 # Séparation des drapeaux pour plus de clarté
-CFLAGS += $(shell pkg-config --cflags gtk+-3.0 vte-2.91 webkit2gtk-4.0)
-LIBS += $(shell pkg-config --libs gtk+-3.0 vte-2.91 webkit2gtk-4.0)
+CFLAGS += $(shell pkg-config --cflags gtk+-3.0 vte-2.91 webkit2gtk-4.1)
+LIBS += $(shell pkg-config --libs gtk+-3.0 vte-2.91 webkit2gtk-4.1)
+
+# 3. Ajout de -rdynamic pour lier les signaux du XML (GtkBuilder)
+LDFLAGS = $(LIBS) -rdynamic
 
 SRC = gneomutt.c
 RES_XML = resources.xml
@@ -30,7 +42,7 @@ $(RES_SRC): $(RES_XML)
 
 # 2. Règle de compilation principale
 $(TARGET): $(SRC) $(RES_SRC)
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LIBS)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
 
 # Vérifie si tous les outils nécessaires sont installés
 check-deps:
