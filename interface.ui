@@ -1,293 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated with glade 3.40.0 -->
 <interface>
-  <requires lib="gtk+" version="3.20"/>
-  <requires lib="vte-2.91" version="0.82"/>
+  <requires lib="gtk+" version="3.20" />
+  <requires lib="vte-2.91" version="0.82" />
   <object class="GtkWindow" id="window">
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">NeoMutt - alban.f.j.martel@laposte.net</property>
     <property name="default-width">1000</property>
     <property name="default-height">700</property>
-    <signal name="destroy" handler="gtk_main_quit" swapped="no"/>
+    <signal name="destroy" handler="gtk_main_quit" swapped="no" />
     <child>
-      <object class="GtkBox" id="main_vbox">
+      <object class="GtkStack" id="main_stack">
         <property name="visible">True</property>
         <property name="can-focus">False</property>
-        <property name="orientation">vertical</property>
+        <property name="transition-type">slide-left-right</property>
         <child>
-          <object class="GtkBox" id="action bar">
+          <object class="GtkBox" id="main_vbox">
             <property name="visible">True</property>
             <property name="can-focus">False</property>
-            <property name="border-width">5</property>
-            <property name="spacing">10</property>
+            <property name="orientation">vertical</property>
             <child>
-              <object class="GtkButton" id="btn_sync">
-                <property name="label" translatable="yes">♻️</property>
-                <property name="name">synchonize</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text" translatable="yes">Synchroniser</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_prev">
-                <property name="label">⬆️</property>
-                <property name="name">previous</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Précédent</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_next">
-                <property name="label">⬇️</property>
-                <property name="name">next</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Suivant</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_enter">
-                <property name="label">✅</property>
-                <property name="name">select</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Selection</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_reply">
-                <property name="label">↪️</property>
-                <property name="name">reply</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Répondre</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">4</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_reply_all">
-                <property name="label">👨‍👩‍👧‍👦</property>
-                <property name="name">groupe</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Répondre à tous</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">5</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_stop">
-                <property name="label" translatable="yes">🛑</property>
-                <property name="name">quit</property>
-                <property name="visible">True</property>
-                <property name="can-focus">False</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Quitter</property>
-                <signal name="clicked" handler="on_stop_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="pack-type">end</property>
-                <property name="position">6</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_write">
-                <property name="label">✍️</property>
-                <property name="name">write</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Écrire</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">6</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkBox" id="search_combined_box">
-                <property name="visible">True</property>
-                <property name="can-focus">False</property>
-                <child>
-                  <object class="GtkEntry" id="main_search_entry">
-                    <property name="width-request">200</property>
-                    <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="tooltip-text" translatable="yes">Champs de recherche</property>
-                    <property name="placeholder-text">Rechercher...</property>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">0</property>
-                  </packing>
-                </child>
-                <child>
-                  <object class="GtkBox" id="search_controls_box">
-                    <property name="visible">True</property>
-                    <property name="can-focus">False</property>
-                    <property name="spacing">6</property>
-                    <child>
-                      <object class="GtkComboBoxText" id="search_options_combo">
-                        <property name="visible">True</property>
-                        <property name="can-focus">False</property>
-                        <property name="tooltip-text" translatable="yes">Rechercher dans...</property>
-                        <property name="active">0</property>
-                        <items>
-                          <item id="gen" translatable="yes">Général</item>
-                          <item id="from" translatable="yes">Expéditeur</item>
-                          <item id="sub" translatable="yes">Objet</item>
-                        </items>
-                      </object>
-                      <packing>
-                        <property name="expand">False</property>
-                        <property name="fill">True</property>
-                        <property name="position">0</property>
-                      </packing>
-                    </child>
-                    <child>
-                      <object class="GtkComboBoxText" id="date_search_combo">
-                        <property name="visible">True</property>
-                        <property name="can-focus">False</property>
-                        <property name="tooltip-text" translatable="yes">Filtrer par date</property>
-                        <property name="active">0</property>
-                        <items>
-                          <item id="any" translatable="yes">Toutes les dates</item>
-                          <item id="today" translatable="yes">Aujourd'hui</item>
-                          <item id="week" translatable="yes">7 derniers jours</item>
-                          <item id="month" translatable="yes">Ce mois-ci</item>
-                        </items>
-                      </object>
-                      <packing>
-                        <property name="expand">False</property>
-                        <property name="fill">True</property>
-                        <property name="position">1</property>
-                      </packing>
-                    </child>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">1</property>
-                  </packing>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_execute_search">
-                    <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="receives-default">False</property>
-                    <property name="tooltip-text">Lancer la recherche</property>
-                    <child>
-                      <object class="GtkImage">
-                        <property name="visible">True</property>
-                        <property name="can-focus">False</property>
-                        <property name="icon-name">system-search-symbolic</property>
-                      </object>
-                    </child>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">2</property>
-                  </packing>
-                </child>
-                <style>
-                  <class name="linked"/>
-                </style>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">7</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_del">
-                <property name="label">❌</property>
-                <property name="name">delete</property>
-                <property name="visible">True</property>
-                <property name="can-focus">True</property>
-                <property name="receives-default">False</property>
-                <property name="tooltip-text">Supprimer</property>
-                <signal name="clicked" handler="on_action_clicked" swapped="no"/>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">True</property>
-                <property name="position">9</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">0</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkBox" id="hbox_body">
-            <property name="visible">True</property>
-            <property name="can-focus">False</property>
-            <child>
-              <object class="GtkBox" id="sidebar">
+              <object class="GtkBox" id="action_bar">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <property name="border-width">5</property>
-                <property name="orientation">vertical</property>
-                <property name="spacing">4</property>
+                <property name="spacing">10</property>
                 <child>
-                  <object class="GtkButton" id="btn_inbox">
-                    <property name="label" translatable="yes">📥</property>
-                    <property name="name">inbox</property>
+                  <object class="GtkButton" id="btn_sync">
+                    <property name="label" translatable="yes">♻️</property>
+                    <property name="name">synchonize</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Réception</property>
+                    <property name="tooltip-text" translatable="yes">Synchroniser</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -296,13 +42,14 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_sent">
-                    <property name="label" translatable="yes">✈️</property>
-                    <property name="name">sent</property>
+                  <object class="GtkButton" id="btn_prev">
+                    <property name="label">⬆️</property>
+                    <property name="name">previous</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Envoyer</property>
+                    <property name="tooltip-text">Précédent</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -311,13 +58,14 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_locale">
-                    <property name="label" translatable="yes">💻</property>
-                    <property name="name">trash</property>
+                  <object class="GtkButton" id="btn_next">
+                    <property name="label">⬇️</property>
+                    <property name="name">next</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Dossier Local</property>
+                    <property name="tooltip-text">Suivant</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -326,13 +74,14 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_draft">
-                    <property name="label" translatable="yes">🛠️</property>
-                    <property name="name">drafts</property>
+                  <object class="GtkButton" id="btn_enter">
+                    <property name="label">✅</property>
+                    <property name="name">select</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Brouillons</property>
+                    <property name="tooltip-text">Selection</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -341,13 +90,13 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_archives">
-                    <property name="label" translatable="yes">📦</property>
-                    <property name="name">archives</property>
+                  <object class="GtkButton" id="btn_view">
+                    <property name="label">👁️</property>
+                    <property name="name">Vionneuse</property>
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Archives</property>
+                    <property name="tooltip-text">Voir courriel</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -356,9 +105,14 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkSeparator">
+                  <object class="GtkButton" id="btn_reply">
+                    <property name="label">↪️</property>
+                    <property name="name">reply</property>
                     <property name="visible">True</property>
-                    <property name="can-focus">False</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Répondre</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -367,28 +121,112 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_quarantine">
-                    <property name="label" translatable="yes">⚠️</property>
-                    <property name="name">quarantaine</property>
+                  <object class="GtkButton" id="btn_stop">
+                    <property name="label" translatable="yes">🛑</property>
+                    <property name="name">quit</property>
                     <property name="visible">True</property>
-                    <property name="can-focus">True</property>
+                    <property name="can-focus">False</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Quarantaine</property>
+                    <property name="tooltip-text">Quitter</property>
+                    <signal name="clicked" handler="on_stop_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
+                    <property name="pack-type">end</property>
                     <property name="position">6</property>
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_trash">
-                    <property name="label" translatable="yes">🗑️</property>
-                    <property name="name">trash</property>
+                  <object class="GtkBox" id="search_combined_box">
                     <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Corbeille</property>
+                    <property name="can-focus">False</property>
+                    <child>
+                      <object class="GtkEntry" id="main_search_entry">
+                        <property name="width-request">200</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="tooltip-text" translatable="yes">Champs de recherche</property>
+                        <property name="placeholder-text">Rechercher...</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkBox" id="search_controls_box">
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkComboBoxText" id="search_options_combo">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="tooltip-text" translatable="yes">Rechercher dans...</property>
+                            <property name="active">0</property>
+                            <items>
+                              <item id="gen" translatable="yes">Général</item>
+                              <item id="from" translatable="yes">Expéditeur</item>
+                              <item id="sub" translatable="yes">Objet</item>
+                            </items>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">0</property>
+                          </packing>
+                        </child>
+                        <child>
+                          <object class="GtkComboBoxText" id="date_search_combo">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="tooltip-text" translatable="yes">Filtrer par date</property>
+                            <property name="active">0</property>
+                            <items>
+                              <item id="any" translatable="yes">Toutes les dates</item>
+                              <item id="today" translatable="yes">Aujourd'hui</item>
+                              <item id="week" translatable="yes">7 derniers jours</item>
+                              <item id="month" translatable="yes">Ce mois-ci</item>
+                            </items>
+                          </object>
+                          <packing>
+                            <property name="expand">False</property>
+                            <property name="fill">True</property>
+                            <property name="position">1</property>
+                          </packing>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_execute_search">
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text">Lancer la recherche</property>
+                        <child>
+                          <object class="GtkImage">
+                            <property name="visible">True</property>
+                            <property name="can-focus">False</property>
+                            <property name="icon-name">system-search-symbolic</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+                    <style>
+                      <class name="linked" />
+                    </style>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -397,19 +235,55 @@
                   </packing>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_help">
-                    <property name="label" translatable="yes">❓</property>
-                    <property name="name">help</property>
+                  <object class="GtkButton" id="btn_reply_all">
+                    <property name="label">👨‍👩‍👧‍👦</property>
+                    <property name="name">groupe</property>
                     <property name="visible">True</property>
-                    <property name="can-focus">False</property>
+                    <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Aide des raccourcis</property>
+                    <property name="tooltip-text">Répondre à tous</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="position">8</property>
                   </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_write">
+                    <property name="label">✍️</property>
+                    <property name="name">write</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Écrire</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">9</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_del">
+                    <property name="label">❌</property>
+                    <property name="name">delete</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Supprimer</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">10</property>
+                  </packing>
+                </child>
+                <child>
+                  <placeholder />
                 </child>
               </object>
               <packing>
@@ -419,21 +293,178 @@
               </packing>
             </child>
             <child>
-              <object class="GtkFrame" id="terminal_frame">
+              <object class="GtkBox" id="hbox_body">
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
-                <property name="label-xalign">0</property>
-                <property name="shadow-type">in</property>
                 <child>
-                  <object class="VteTerminal" id="terminal">
-                    <property name="name">terminal</property>
+                  <object class="GtkBox" id="sidebar">
                     <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="encoding">UTF-8</property>
-                    <property name="scrollback-lines">10000</property>
-                    <property name="scroll-on-keystroke">True</property>
-                    <property name="scroll-on-output">False</property>
+                    <property name="can-focus">False</property>
+                    <property name="border-width">5</property>
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">4</property>
+                    <child>
+                      <object class="GtkButton" id="btn_inbox">
+                        <property name="label" translatable="yes">📥</property>
+                        <property name="name">inbox</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Réception</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">0</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_sent">
+                        <property name="label" translatable="yes">✈️</property>
+                        <property name="name">sent</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Envoyer</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">1</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_locale">
+                        <property name="label" translatable="yes">💻</property>
+                        <property name="name">trash</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Dossier Local</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_draft">
+                        <property name="label" translatable="yes">🛠️</property>
+                        <property name="name">drafts</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Brouillons</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">3</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_archives">
+                        <property name="label" translatable="yes">📦</property>
+                        <property name="name">archives</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Archives</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">4</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkSeparator">
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">5</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_quarantine">
+                        <property name="label" translatable="yes">⚠️</property>
+                        <property name="name">quarantaine</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Quarantaine</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">6</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_trash">
+                        <property name="label" translatable="yes">🗑️</property>
+                        <property name="name">trash</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Corbeille</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">7</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_help">
+                        <property name="label" translatable="yes">❓</property>
+                        <property name="name">help</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">False</property>
+                        <property name="receives-default">False</property>
+                        <property name="tooltip-text" translatable="yes">Aide des raccourcis</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">8</property>
+                      </packing>
+                    </child>
                   </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkFrame" id="terminal_frame">
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="label-xalign">0</property>
+                    <property name="shadow-type">in</property>
+                    <child>
+                      <object class="VteTerminal" id="terminal">
+                        <property name="name">terminal</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="encoding">UTF-8</property>
+                        <property name="scrollback-lines">10000</property>
+                        <property name="scroll-on-keystroke">True</property>
+                        <property name="scroll-on-output">False</property>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                    <property name="padding">4</property>
+                    <property name="position">1</property>
+                  </packing>
                 </child>
               </object>
               <packing>
@@ -445,9 +476,57 @@
             </child>
           </object>
           <packing>
-            <property name="expand">True</property>
-            <property name="fill">True</property>
-            <property name="padding">4</property>
+            <property name="name">neomutt_page</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkBox" id="web_page_layout">
+            <property name="visible">True</property>
+            <property name="can-focus">False</property>
+            <property name="orientation">vertical</property>
+            <child>
+              <object class="GtkBox" id="web_toolbar">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <property name="border-width">5</property>
+                <child>
+                  <object class="GtkButton" id="btn_back">
+                    <property name="label" translatable="yes">⬅️ Retour au Terminal</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">False</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Revenir à NeoMutt (Échap)</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">0</property>
+                  </packing>
+                </child>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkBox" id="web_container">
+                <property name="visible">True</property>
+                <property name="can-focus">False</property>
+                <child>
+                  <placeholder />
+                </child>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">True</property>
+                <property name="position">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="name">html_page</property>
             <property name="position">1</property>
           </packing>
         </child>
