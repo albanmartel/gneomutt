@@ -1,22 +1,23 @@
 #include <gtk/gtk.h>
 #include <stddef.h>
-#include <vte/vte.h>
-#include <sys/prctl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <vte/vte.h>
 #include <webkit2/webkit2.h>
 
 #ifdef DEBUG
-    #define DEBUG_LOG(fmt, ...) g_print("[DEBUG] " fmt "\n", ##__VA_ARGS__)
+#define DEBUG_LOG(fmt, ...) g_print("[DEBUG] " fmt "\n", ##__VA_ARGS__)
 #else
-    #define DEBUG_LOG(fmt, ...)
+#define DEBUG_LOG(fmt, ...)
 #endif
 
 /* --- CONFIGURATION --- */
 #define PROGRAMME_NAME "gneomutt"
-#define UI_FILE        "interface.ui"
-#define CMD_NEOMUTT    "/usr/bin/neomutt"
-#define CMD_SYNC       "mbsync -a && notmuch new &"
+#define UI_FILE "interface.ui"
+#define CMD_NEOMUTT "/usr/bin/neomutt"
+#define CMD_SYNC "mbsync -a && notmuch new &"
+#define LOCAL_HTML "/tmp/mutt_render/index.html"
 
 #define MACRO_INBOX "gi"
 #define MACRO_SENT "go"
@@ -32,6 +33,7 @@
 #define KEY_WRITE "m"
 #define KEY_REPLY "r"
 #define KEY_REPLY_ALL "g"
+#define KEY_VIEW "V"
 
 /*--- Taille tableau des pointeurs de dossiers ---*/
 #define NB_FOLDERS 7
@@ -43,443 +45,663 @@
 #define ERR_INTERFACE "Erreur chargement interface : %s\n"
 #define ERR_WEB8WIN "ERREUR : 'web_container' introuvable dans interface.ui\n"
 
-const char *HELP_TEXT = 
-"GUIDE DE RÉFÉRENCE NEOMUTT\n"
-"==========================\n\n"
-"1. NAVIGATION\n"
-"---------------------\n"
-"j / k         : Déplacer la sélection (Bas / Haut)\n"
-"Entrée        : Ouvrir le message ou la pièce jointe\n"
-"Espace        : Faire défiler le texte (Page suivante)\n"
-"q             : Retour en arrière / Quitter\n\n"
-"2. GESTION DES MESSAGES\n"
-"-----------------------\n"
-"m             : Rédiger un nouveau message\n"
-"r             : Répondre à l'expéditeur\n"
-"g             : Répondre à TOUS (Group reply)\n"
-"f             : Transférer le message (Forward)\n"
-"d             : Marquer pour suppression\n"
-"u             : Annuler une suppression (Undelete)\n"
-"$             : Sauvegarder et synchroniser la boîte\n\n"
-"3. RECHERCHE ET FILTRES\n"
-"-----------------------\n"
-"/             : Rechercher dans le dossier actuel\n"
-"n             : Résultat de recherche suivant\n"
-"l             : Limiter l'affichage (ex: type 'all')\n\n"
-"4. ACTIONS AVANCÉES\n"
-"-------------------\n"
-"v             : Voir les pièces jointes\n"
-"t             : 'Taguer' un message (sélection multiple)\n"
-";             : Appliquer l'action suivante aux messages tagués\n"
-"              (Exemple : ';d' pour tout supprimer)\n";
+const char *HELP_TEXT =
+    "GUIDE DE RÉFÉRENCE NEOMUTT\n"
+    "==========================\n\n"
+    "1. NAVIGATION\n"
+    "---------------------\n"
+    "j / k         : Déplacer la sélection (Bas / Haut)\n"
+    "Entrée        : Ouvrir le message ou la pièce jointe\n"
+    "Espace        : Faire défiler le texte (Page suivante)\n"
+    "q             : Retour en arrière / Quitter\n\n"
+    "2. GESTION DES MESSAGES\n"
+    "-----------------------\n"
+    "m             : Rédiger un nouveau message\n"
+    "r             : Répondre à l'expéditeur\n"
+    "g             : Répondre à TOUS (Group reply)\n"
+    "f             : Transférer le message (Forward)\n"
+    "d             : Marquer pour suppression\n"
+    "u             : Annuler une suppression (Undelete)\n"
+    "$             : Sauvegarder et synchroniser la boîte\n\n"
+    "3. RECHERCHE ET FILTRES\n"
+    "-----------------------\n"
+    "/             : Rechercher dans le dossier actuel\n"
+    "n             : Résultat de recherche suivant\n"
+    "l             : Limiter l'affichage (ex: type 'all')\n\n"
+    "4. ACTIONS AVANCÉES\n"
+    "-------------------\n"
+    "v             : Voir les pièces jointes\n"
+    "t             : 'Taguer' un message (sélection multiple)\n"
+    ";             : Appliquer l'action suivante aux messages tagués\n"
+    "              (Exemple : ';d' pour tout supprimer)\n";
 
 typedef struct {
-    GtkWidget *window;
-    GtkWidget *terminal;
-    GtkWidget *search_entry;
-    GtkWidget *search_combo;
-    GtkWidget *date_combo;
-    GtkWidget *folder_buttons[NB_FOLDERS];
-    GtkWidget *main_stack;
-    GtkWidget *web_view;
+  GtkWidget *window;
+  GtkWidget *terminal;
+  GtkWidget *search_entry;
+  GtkWidget *search_combo;
+  GtkWidget *date_combo;
+  GtkWidget *folder_buttons[NB_FOLDERS];
+  GtkWidget *main_stack;
+  GtkWidget *web_view;
+  WebKitSettings *web_settings;
+  GtkWidget *context_menu;
 } AppContext;
 
 /* --- CONFIGURATION DES TOUCHES (Arrow Keys Mapping) --- */
 typedef struct {
-    guint keyval;        // La touche pressée (ex: GDK_KEY_Left)
-    const char *command; // La commande envoyée à NeoMutt (ex: "k")
+  guint keyval;        // La touche pressée (ex: GDK_KEY_Left)
+  const char *command; // La commande envoyée à NeoMutt (ex: "k")
 } KeyMapping;
 
 static const KeyMapping arrow_map[] = {
-    {GDK_KEY_Left,  "k"},   // Left Arrow
-    {GDK_KEY_Right, "j"},   // Right Arrow
-    {GDK_KEY_Up,    "-"},   // Up Arrow
-    {GDK_KEY_Down,  " "}    // Down Arrow (Space)
+    {GDK_KEY_Left, "k"},  // Left Arrow
+    {GDK_KEY_Right, "j"}, // Right Arrow
+    {GDK_KEY_Up, "-"},    // Up Arrow
+    {GDK_KEY_Down, " "}   // Down Arrow (Space)
 };
 
 /* --- UTILITAIRES --- */
 void send_term_data(GtkWidget *terminal, const char *data) {
-    if (!terminal) return;
-    vte_terminal_feed_child(VTE_TERMINAL(terminal), data, -1);
+  if (!terminal)
+    return;
+  vte_terminal_feed_child(VTE_TERMINAL(terminal), data, -1);
 }
 
 void update_active_folder_ui(GtkWidget *active_button, AppContext *ctx) {
-    if (!ctx) return;
+  if (!ctx)
+    return;
 
-    // G_N_ELEMENTS calcule automatiquement le nombre de cases du tableau
-    for (size_t i = 0; i < G_N_ELEMENTS(ctx->folder_buttons); i++) {
-        if (ctx->folder_buttons[i]) {
-            GtkStyleContext *style = gtk_widget_get_style_context(ctx->folder_buttons[i]);
-            gtk_style_context_remove_class(style, "folder-active");
-        }
+  // G_N_ELEMENTS calcule automatiquement le nombre de cases du tableau
+  for (size_t i = 0; i < G_N_ELEMENTS(ctx->folder_buttons); i++) {
+    if (ctx->folder_buttons[i]) {
+      GtkStyleContext *style =
+          gtk_widget_get_style_context(ctx->folder_buttons[i]);
+      gtk_style_context_remove_class(style, "folder-active");
     }
-    
-    if (active_button) {
-        GtkStyleContext *style = gtk_widget_get_style_context(active_button);
-        gtk_style_context_add_class(style, "folder-active");
-    }
+  }
+
+  if (active_button) {
+    GtkStyleContext *style = gtk_widget_get_style_context(active_button);
+    gtk_style_context_add_class(style, "folder-active");
+  }
 }
 
 /* --- CALLBACKS --- */
-void on_terminal_child_exited(VteTerminal *terminal, int status, gpointer user_data) {
-    (void)terminal; (void)status; (void)user_data;
-    gtk_main_quit();
+void on_terminal_child_exited(VteTerminal *terminal, int status,
+                              gpointer user_data) {
+  (void)terminal;
+  (void)status;
+  (void)user_data;
+  gtk_main_quit();
 }
 
 void on_help_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    AppContext *ctx = (AppContext *)user_data;
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("Aide", GTK_WINDOW(ctx->window),
-                            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                            "_Fermer", GTK_RESPONSE_CLOSE, NULL);
+  (void)btn;
+  AppContext *ctx = (AppContext *)user_data;
+  GtkWidget *dialog = gtk_dialog_new_with_buttons(
+      "Aide", GTK_WINDOW(ctx->window),
+      GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "_Fermer",
+      GTK_RESPONSE_CLOSE, NULL);
 
-    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *text_view = gtk_text_view_new();
-    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view)), HELP_TEXT, -1);
-    
-    gtk_container_add(GTK_CONTAINER(content_area), text_view);
-    gtk_widget_show_all(dialog);
-    gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
+  GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+  GtkWidget *text_view = gtk_text_view_new();
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view)),
+                           HELP_TEXT, -1);
+
+  gtk_container_add(GTK_CONTAINER(content_area), text_view);
+  gtk_widget_show_all(dialog);
+  gtk_dialog_run(GTK_DIALOG(dialog));
+  gtk_widget_destroy(dialog);
 }
 
 void on_stop_clicked(GtkButton *btn, gpointer user_data) {
-    (void)btn;
-    AppContext *ctx = (AppContext *)user_data;
-    
-    // 1. Envoyer la commande d'exécution immédiate (sans confirmation)
-    // On envoie : <exit> ou simplement la touche 'x' si bindée par défaut
-    // Pour être universel, on peut envoyer : :q!\n 
-    send_term_data(ctx->terminal, "\033:q!\n"); 
+  (void)btn;
+  AppContext *ctx = (AppContext *)user_data;
 
-    // 2. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la fenêtre
-    // Cela déclenchera la destruction du terminal et l'arrêt du programme
-    gtk_window_close(GTK_WINDOW(ctx->window));
+  // 1. Envoyer la commande d'exécution immédiate (sans confirmation)
+  // On envoie : <exit> ou simplement la touche 'x' si bindée par défaut
+  // Pour être universel, on peut envoyer : :q!\n
+  send_term_data(ctx->terminal, "\033:q!\n");
+
+  // 2. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la
+  // fenêtre Cela déclenchera la destruction du terminal et l'arrêt du programme
+  gtk_window_close(GTK_WINDOW(ctx->window));
 }
 
-gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer user_data) {
-    (void)widget; 
-    AppContext *ctx = (AppContext *)user_data;
+gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
+                      gpointer user_data) {
+  (void)widget;
+  AppContext *ctx = (AppContext *)user_data;
 
-    /*--- CAS 1 si entrée clavier dans la barre de recherche ---*/ 
-    if (gtk_widget_has_focus(ctx->search_entry)) {
-        return FALSE; 
-    }
+  /*--- Détection de Ctrl + Shift + C (Copier) --*/
+  if ((event->state & GDK_CONTROL_MASK) && (event->state & GDK_SHIFT_MASK) &&
+      (event->keyval == GDK_KEY_C || event->keyval == GDK_KEY_C)) {
 
+    DEBUG_LOG("Copie du texte sélectionné vers le presse-papier");
+    vte_terminal_copy_clipboard_format(VTE_TERMINAL(ctx->terminal),
+                                       VTE_FORMAT_TEXT);
+    return TRUE; // On arrête la propagation de l'événement
+  }
 
-    /* --- SURCHARGE DES TOUCHES FLÉCHÉES --- */
-    const char *cmd = NULL;
+  /*--- Détection de Ctrl + Shift + V (Coller - Optionnel mais pratique) --*/
+  if ((event->state & GDK_CONTROL_MASK) && (event->state & GDK_SHIFT_MASK) &&
+      (event->keyval == GDK_KEY_V || event->keyval == GDK_KEY_V)) {
 
-    /* Associer le tableau de configuration aux nouveaux raccourci clavier */
-    for (size_t i = 0; i < G_N_ELEMENTS(arrow_map); i++) {
-        if (event->keyval == arrow_map[i].keyval) {
-            cmd = arrow_map[i].command;
-            break; // On a trouvé la correspondance, on sort de la boucle
-        }
-    }
+    vte_terminal_paste_clipboard(VTE_TERMINAL(ctx->terminal));
+    return TRUE;
+  }
 
-    /* Vérification du cmd et de la présence du terminal */
-    if (cmd && ctx->terminal) {
-        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), cmd, -1);
-        return TRUE; 
-    }
-
-    /*--- CAS 2. Gestion Ctrl + Q  et F1 ---*/
-    if ((event->state & GDK_CONTROL_MASK) && event->keyval == GDK_KEY_q) {
-        on_stop_clicked(NULL, ctx);
-        return TRUE;
-    }
-
-    // Mapper F1 vers l'aide contextuelle '?'
-    if (event->keyval == GDK_KEY_F1) {
-        // On envoie le caractère '?' au terminal
-        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "?", -1);
-        
-        // On force le focus pour pouvoir naviguer dans l'aide immédiatement
-        gtk_widget_grab_focus(ctx->terminal);
-        
-        DEBUG_LOG("F1 pressé : Redirection vers l'aide contextuelle (?)");
-        return TRUE; 
-    }
-
-    // 3. REDIRECTION SYSTÉMATIQUE
-    // Si on n'est pas dans la recherche, on envoie TOUT au terminal
-    if (ctx->terminal && event->string) {
-        // On s'assure que le terminal a le focus interne
-        if (!gtk_widget_has_focus(ctx->terminal)) {
-            gtk_widget_grab_focus(ctx->terminal);
-        }
-
-        // On envoie la touche
-        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), event->string, -1);
-        return TRUE; // On "consomme" l'événement pour que GTK ne l'utilise pas pour les boutons
-    }
-
+  /*--- CAS 1 si entrée clavier dans la barre de recherche ---*/
+  if (gtk_widget_has_focus(ctx->search_entry)) {
     return FALSE;
+  }
+
+  /* --- SURCHARGE DES TOUCHES FLÉCHÉES --- */
+  const char *cmd = NULL;
+
+  /* Associer le tableau de configuration aux nouveaux raccourci clavier */
+  for (size_t i = 0; i < G_N_ELEMENTS(arrow_map); i++) {
+    if (event->keyval == arrow_map[i].keyval) {
+      cmd = arrow_map[i].command;
+      break; // On a trouvé la correspondance, on sort de la boucle
+    }
+  }
+
+  /* Vérification du cmd et de la présence du terminal */
+  if (cmd && ctx->terminal) {
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), cmd, -1);
+    return TRUE;
+  }
+
+  /*--- CAS 2. Gestion Ctrl + Q  et F1 ---*/
+  if ((event->state & GDK_CONTROL_MASK) && event->keyval == GDK_KEY_q) {
+    on_stop_clicked(NULL, ctx);
+    return TRUE;
+  }
+
+  // Mapper F1 vers l'aide contextuelle '?'
+  if (event->keyval == GDK_KEY_F1) {
+    // On envoie le caractère '?' au terminal
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "?", -1);
+
+    // On force le focus pour pouvoir naviguer dans l'aide immédiatement
+    gtk_widget_grab_focus(ctx->terminal);
+
+    DEBUG_LOG("F1 pressé : Redirection vers l'aide contextuelle (?)");
+    return TRUE;
+  }
+
+  // 3. REDIRECTION SYSTÉMATIQUE
+  // Si on n'est pas dans la recherche, on envoie TOUT au terminal
+  if (ctx->terminal && event->string) {
+    // On s'assure que le terminal a le focus interne
+    if (!gtk_widget_has_focus(ctx->terminal)) {
+      gtk_widget_grab_focus(ctx->terminal);
+    }
+
+    // On envoie la touche
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), event->string, -1);
+    return TRUE; // On "consomme" l'événement pour que GTK ne l'utilise pas pour
+                 // les boutons
+  }
+
+  return FALSE;
 }
 
-void on_refresh_clicked(GtkButton *btn, gpointer user_data) { 
-    (void)btn; (void)user_data;
-    if (system(CMD_SYNC) == -1) g_warning(ERR_SYNC);
+void on_refresh_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  (void)user_data;
+  if (system(CMD_SYNC) == -1)
+    g_warning(ERR_SYNC);
 }
 
 void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
-    AppContext *ctx = g_object_get_data(G_OBJECT(btn), "ctx");
-    const char *macro = (const char *)macro_keys;
+  AppContext *ctx = g_object_get_data(G_OBJECT(btn), "ctx");
+  const char *macro = (const char *)macro_keys;
 
-    if (ctx && ctx->terminal && macro) {
-        send_term_data(ctx->terminal, macro);
-        
-        /* --- MISE À JOUR VISUELLE --- */
-        update_active_folder_ui(GTK_WIDGET(btn), ctx);
-        
-        gtk_widget_grab_focus(ctx->terminal);
-    }
+  if (ctx && ctx->terminal && macro) {
+    send_term_data(ctx->terminal, macro);
+
+    /* --- MISE À JOUR VISUELLE --- */
+    update_active_folder_ui(GTK_WIDGET(btn), ctx);
+
+    gtk_widget_grab_focus(ctx->terminal);
+  }
 }
 
 void on_action_clicked(GtkButton *btn, gpointer user_data) {
-    // 1. On récupère le contexte (soit via user_data, soit via l'objet)
-    AppContext *ctx = (AppContext *)user_data; 
-    
-    // 2. On récupère la touche stockée dans le bouton
-    const char *key = g_object_get_data(G_OBJECT(btn), "key-to-send");
+  // 1. On récupère le contexte (soit via user_data, soit via l'objet)
+  AppContext *ctx = (AppContext *)user_data;
 
-    if (ctx && ctx->terminal && key) {
-        send_term_data(ctx->terminal, key);
-        // Important pour garder le contrôle au clavier immédiatement
-        gtk_widget_grab_focus(ctx->terminal);
-    }
+  // 2. On récupère la touche stockée dans le bouton
+  const char *key = g_object_get_data(G_OBJECT(btn), "key-to-send");
+
+  if (ctx && ctx->terminal && key) {
+    send_term_data(ctx->terminal, key);
+    // Important pour garder le contrôle au clavier immédiatement
+    gtk_widget_grab_focus(ctx->terminal);
+  }
 }
 
 void on_search_clicked(GtkWidget *widget, gpointer user_data) {
-    (void)widget;
-    AppContext *ctx = (AppContext *)user_data;
-    
-    const char *text = gtk_entry_get_text(GTK_ENTRY(ctx->search_entry));
-    const char *option = gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->search_combo));
-    const char *date_id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->date_combo));
+  (void)widget;
+  AppContext *ctx = (AppContext *)user_data;
 
-    // Si tout est vide, on ne fait rien
-    if ((!text || strlen(text) == 0) && (g_strcmp0(date_id, "any") == 0)) return;
+  const char *text = gtk_entry_get_text(GTK_ENTRY(ctx->search_entry));
+  const char *option =
+      gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->search_combo));
+  const char *date_id =
+      gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->date_combo));
 
-    // 1. Lancement de Notmuch
-    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\007:exec vfolder-from-query\n", -1);
+  // Si tout est vide, on ne fait rien
+  if ((!text || strlen(text) == 0) && (g_strcmp0(date_id, "any") == 0))
+    return;
 
-    // 2. Construction de la requête Notmuch complexe
-    if (date_id && g_strcmp0(date_id, "any") != 0) {
-        if (g_strcmp0(date_id, "today") == 0)      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:today ", -1);
-        else if (g_strcmp0(date_id, "week") == 0)  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:7d.. ", -1);
-        else if (g_strcmp0(date_id, "month") == 0) vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:1m.. ", -1);
-    }
+  // 1. Lancement de Notmuch
+  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal),
+                          "\007:exec vfolder-from-query\n", -1);
 
-    // 3. Préfixe de champ (from: ou subject:)
-    if (g_strcmp0(option, "from") == 0) {
-        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "from:", -1);
-    } else if (g_strcmp0(option, "sub") == 0) {
-        vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "subject:", -1);
-    }
+  // 2. Construction de la requête Notmuch complexe
+  if (date_id && g_strcmp0(date_id, "any") != 0) {
+    if (g_strcmp0(date_id, "today") == 0)
+      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:today ", -1);
+    else if (g_strcmp0(date_id, "week") == 0)
+      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:7d.. ", -1);
+    else if (g_strcmp0(date_id, "month") == 0)
+      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:1m.. ", -1);
+  }
 
-    // 4. Texte et validation finale
-    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), text, -1);
-    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\n", -1);
+  // 3. Préfixe de champ (from: ou subject:)
+  if (g_strcmp0(option, "from") == 0) {
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "from:", -1);
+  } else if (g_strcmp0(option, "sub") == 0) {
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "subject:", -1);
+  }
 
-    // Reset UI
-    gtk_entry_set_text(GTK_ENTRY(ctx->search_entry), "");
-    gtk_widget_grab_focus(ctx->terminal);
+  // 4. Texte et validation finale
+  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), text, -1);
+  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\n", -1);
+
+  // Reset UI
+  gtk_entry_set_text(GTK_ENTRY(ctx->search_entry), "");
+  gtk_widget_grab_focus(ctx->terminal);
 }
 
 void on_view_html_clicked(GtkWidget *widget, gpointer user_data) {
-    (void)widget;
-    AppContext *ctx = (AppContext *)user_data;
-    
-    printf("Test de connexion : chargement de Google...\n");
+  (void)widget;
+  AppContext *ctx = (AppContext *)user_data;
 
-    // On charge l'URL
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), "https://www.google.com");
+  // Lance l'action (Rappel : KEY_VIEW doit finir par " && exit\n")
+  vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), KEY_VIEW, -1);
 
-    // On s'assure que la vue est visible et occupe l'espace
-    gtk_widget_show(ctx->web_view);
-    gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "html_page");
-    gtk_widget_show_all(ctx->main_stack);
+  // 1. Définition du chemin local
+  const char *path = LOCAL_HTML;
+
+  // 2. Vérification de l'existence du fichier avant chargement
+  if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
+    g_warning("Le fichier HTML n'existe pas encore : %s", path);
+    // Optionnel : afficher un message à l'utilisateur ici
+    return;
+  }
+
+  // 3. Conversion du chemin local en URI (file://...)
+  gchar *uri = g_filename_to_uri(path, NULL, NULL);
+
+  if (uri) {
+    DEBUG_LOG("Chargement du message local : %s", uri);
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), uri);
+    g_free(uri);
+  }
+
+  // 4. Mise à jour de l'interface (votre logique originale)
+  gtk_widget_show(ctx->web_view);
+  gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "html_page");
+  gtk_widget_show_all(ctx->main_stack);
 }
 
 void on_back_clicked(GtkWidget *widget, gpointer user_data) {
-    (void)widget;
-    AppContext *ctx = (AppContext *)user_data;
+  (void)widget;
+  AppContext *ctx = (AppContext *)user_data;
 
-    // Revenir à l'interface NeoMutt
-    gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "neomutt_page");
+  // Revenir à l'interface NeoMutt
+  gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "neomutt_page");
 
-    // Redonner le focus au terminal pour pouvoir continuer à utiliser le clavier
-    gtk_widget_grab_focus(ctx->terminal);
+  // Redonner le focus au terminal pour pouvoir continuer à utiliser le clavier
+  gtk_widget_grab_focus(ctx->terminal);
+}
+
+void on_toggle_images_clicked(GtkWidget *button, gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  // 1. Récupérer l'état actuel (par défaut FALSE si non défini)
+  gpointer data = g_object_get_data(G_OBJECT(button), "allow-images");
+  gboolean current_state = GPOINTER_TO_INT(data);
+
+  // 2. Inverser l'état
+  gboolean new_state = !current_state;
+
+  // 3. Sauvegarder le nouvel état pour le prochain clic
+  g_object_set_data(G_OBJECT(button), "allow-images",
+                    GINT_TO_POINTER(new_state));
+
+  g_print("Action demandée : %s les images distantes\n",
+          new_state ? "AUTORISER" : "BLOQUER");
+
+  // 4. Configurer WebKit avec les permissions réseau requises
+  WebKitSettings *settings =
+      webkit_web_view_get_settings(WEBKIT_WEB_VIEW(ctx->web_view));
+
+  // Règle de base : charger ou non les images
+  webkit_settings_set_auto_load_images(settings, new_state);
+
+  // CLÉ DE VOUTE : Permettre à notre fichier HTML local (/tmp/...)
+  // d'accéder à des adresses HTTP/HTTPS distantes pour télécharger les images.
+  webkit_settings_set_allow_universal_access_from_file_urls(settings,
+                                                            new_state);
+
+  // 5. Appliquer les réglages réels
+  webkit_web_view_set_settings(WEBKIT_WEB_VIEW(ctx->web_view), settings);
+
+  // 6. Mettre à jour le texte du bouton pour l'utilisateur
+  if (GTK_IS_BUTTON(button)) {
+    gtk_button_set_label(GTK_BUTTON(button), new_state ? "Bloquer les images"
+                                                       : "Afficher les images");
+  }
+
+  // 7. Forcer le rechargement complet en ignorant le cache de l'ancienne page
+  // bloquée
+  webkit_web_view_reload_bypass_cache(WEBKIT_WEB_VIEW(ctx->web_view));
+}
+
+// Fonction universelle pour COPIER le texte sélectionné du widget actif
+void on_global_copy_activated(G_GNUC_UNUSED GtkWidget *widget,
+                              gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  GtkWidget *focus_widget = gtk_window_get_focus(GTK_WINDOW(ctx->window));
+  if (focus_widget != NULL) {
+    g_signal_emit_by_name(focus_widget, "copy-clipboard");
+  }
+}
+
+// Fonction universelle pour COLLER le texte dans le widget actif
+void on_global_paste_activated(G_GNUC_UNUSED GtkWidget *widget,
+                               gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  GtkWidget *focus_widget = gtk_window_get_focus(GTK_WINDOW(ctx->window));
+  if (focus_widget != NULL) {
+    g_signal_emit_by_name(focus_widget, "paste-clipboard");
+  }
+}
+
+// Gestionnaire du clic droit sur la fenêtre
+static gboolean on_window_button_press(G_GNUC_UNUSED GtkWidget *widget,
+                                       GdkEventButton *event,
+                                       gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  if (event->type == GDK_BUTTON_PRESS &&
+      event->button == GDK_BUTTON_SECONDARY) {
+    gtk_menu_popup_at_pointer(GTK_MENU(ctx->context_menu), (GdkEvent *)event);
+    return TRUE;
+  }
+  return FALSE;
 }
 
 /* --- INITIALISATION UI --- */
 int init_gui(AppContext *ctx, GtkBuilder *builder) {
-    GError *error = NULL;
+  GError *error = NULL;
 
-    /* 1. Chargement du XML depuis les ressources */
-    if (!gtk_builder_add_from_resource(builder, "/com/monprojet/icons/interface.ui", &error)) {
-        g_printerr("Erreur chargement interface : %s\n", error->message);
-        if (error) g_error_free(error);
-        return 0;
+  /* 1. Chargement du XML depuis les ressources */
+  if (!gtk_builder_add_from_resource(
+          builder, "/com/monprojet/icons/interface.ui", &error)) {
+    g_printerr("Erreur chargement interface : %s\n", error->message);
+    if (error)
+      g_error_free(error);
+    return 0;
+  }
+
+  /* 2. Récupération des widgets principaux */
+  ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
+  ctx->main_stack = GTK_WIDGET(gtk_builder_get_object(builder, "main_stack"));
+  ctx->terminal = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
+
+  /* 3. Configuration de WebKit (Injection dans le conteneur du XML) */
+  GtkWidget *web_container =
+      GTK_WIDGET(gtk_builder_get_object(builder, "web_container"));
+  if (web_container) {
+    ctx->web_view = webkit_web_view_new();
+
+    // Initialisation des réglages
+    ctx->web_settings = webkit_settings_new();
+    // Par défaut, on bloque pour la vie privée
+    webkit_settings_set_auto_load_images(ctx->web_settings, FALSE);
+    webkit_web_view_set_settings(WEBKIT_WEB_VIEW(ctx->web_view),
+                                 ctx->web_settings);
+
+    // 1. On autorise la vue à s'étendre verticalement et horizontalement
+    gtk_widget_set_hexpand(ctx->web_view, TRUE);
+    gtk_widget_set_vexpand(ctx->web_view, TRUE);
+
+    // 2. On l'ajoute au conteneur
+    gtk_container_add(GTK_CONTAINER(web_container), ctx->web_view);
+
+    // 3. On peut enlever le size_request ou le mettre à une valeur minimale
+    // gtk_widget_set_size_request(ctx->web_view, 100, 100);
+
+    gtk_widget_show_all(web_container);
+  } else {
+    g_printerr("ERREUR : 'web_container' introuvable dans interface.ui\n");
+  }
+
+  /* 4. Style CSS */
+  GtkCssProvider *provider = gtk_css_provider_new();
+  gtk_css_provider_load_from_data(provider,
+                                  ".folder-active { background-color: #3584e4; "
+                                  "color: white; border-radius: 5px; }",
+                                  -1, NULL);
+  gtk_style_context_add_provider_for_screen(
+      gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider),
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  g_object_unref(provider);
+
+  /* 5. Configuration et Lancement du Terminal VTE */
+  if (ctx->terminal) {
+    vte_terminal_set_scroll_on_output(VTE_TERMINAL(ctx->terminal), TRUE);
+    vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL,
+                             (char *[]){CMD_NEOMUTT, NULL}, NULL,
+                             G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL,
+                             NULL, NULL);
+    g_signal_connect(ctx->terminal, "child-exited",
+                     G_CALLBACK(on_terminal_child_exited), ctx);
+  }
+
+  /* 6. Widgets de Recherche */
+  ctx->search_entry =
+      GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
+  ctx->search_combo =
+      GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
+  ctx->date_combo =
+      GTK_WIDGET(gtk_builder_get_object(builder, "date_search_combo"));
+
+  GtkWidget *btn_search =
+      GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
+  if (btn_search) {
+    g_signal_connect(btn_search, "clicked", G_CALLBACK(on_search_clicked), ctx);
+    g_signal_connect(ctx->search_entry, "activate",
+                     G_CALLBACK(on_search_clicked), ctx);
+  }
+
+  /* 7. Gestion des Dossiers (Sidebar) */
+  struct {
+    const char *id;
+    const char *macro;
+  } folders[] = {
+      {"btn_inbox", MACRO_INBOX},      {"btn_sent", MACRO_SENT},
+      {"btn_locale", MACRO_LOCALE},    {"btn_trash", MACRO_TRASH},
+      {"btn_draft", MACRO_DRAFT},      {"btn_quarantine", MACRO_QUAR},
+      {"btn_archives", MACRO_ARCHIVES}};
+
+  for (size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
+    GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i].id));
+    ctx->folder_buttons[i] = b;
+    if (b) {
+      g_object_set_data(G_OBJECT(b), "ctx", ctx);
+      g_signal_connect(b, "clicked", G_CALLBACK(on_folder_clicked),
+                       (gpointer)folders[i].macro);
     }
+  }
 
-    /* 2. Récupération des widgets principaux */
-    ctx->window     = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
-    ctx->main_stack = GTK_WIDGET(gtk_builder_get_object(builder, "main_stack"));
-    ctx->terminal   = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
+  /* 8. Boutons d'Action (Raccourcis clavier) */
+  struct {
+    const char *id;
+    const char *key;
+  } shortcuts[] = {{"btn_prev", KEY_PREV},   {"btn_next", KEY_NEXT},
+                   {"btn_enter", "\n"},      {"btn_write", KEY_WRITE},
+                   {"btn_reply", KEY_REPLY}, {"btn_reply_all", KEY_REPLY_ALL},
+                   {"btn_del", KEY_DEL},     {"btn_view", KEY_VIEW}};
 
-    /* 3. Configuration de WebKit (Injection dans le conteneur du XML) */
-    GtkWidget *web_container = GTK_WIDGET(gtk_builder_get_object(builder, "web_container"));
-    if (web_container) {
-        ctx->web_view = webkit_web_view_new();
-        
-        // 1. On autorise la vue à s'étendre verticalement et horizontalement
-        gtk_widget_set_hexpand(ctx->web_view, TRUE);
-        gtk_widget_set_vexpand(ctx->web_view, TRUE);
-
-        // 2. On l'ajoute au conteneur
-        gtk_container_add(GTK_CONTAINER(web_container), ctx->web_view);
-        
-        // 3. On peut enlever le size_request ou le mettre à une valeur minimale
-        // gtk_widget_set_size_request(ctx->web_view, 100, 100); 
-
-        gtk_widget_show_all(web_container); 
-    } else {
-        g_printerr("ERREUR : 'web_container' introuvable dans interface.ui\n");
+  for (size_t i = 0; i < G_N_ELEMENTS(shortcuts); i++) {
+    GtkWidget *obj =
+        GTK_WIDGET(gtk_builder_get_object(builder, shortcuts[i].id));
+    if (obj) {
+      g_object_set_data(G_OBJECT(obj), "key-to-send",
+                        (gpointer)shortcuts[i].key);
+      g_signal_connect(obj, "clicked", G_CALLBACK(on_action_clicked), ctx);
     }
+  }
 
-    /* 4. Style CSS */
-    GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_data(provider,
-        ".folder-active { background-color: #3584e4; color: white; border-radius: 5px; }", 
-        -1, NULL);
-    gtk_style_context_add_provider_for_screen(
-        gdk_screen_get_default(),
-        GTK_STYLE_PROVIDER(provider), 
-        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
-    );
-    g_object_unref(provider);
+  /* 9. Boutons de navigation/outils */
+  struct {
+    const char *id;
+    GCallback cb;
+  } special[] = {{"btn_help", G_CALLBACK(on_help_clicked)},
+                 {"btn_stop", G_CALLBACK(on_stop_clicked)},
+                 {"btn_sync", G_CALLBACK(on_refresh_clicked)}};
+  for (size_t i = 0; i < G_N_ELEMENTS(special); i++) {
+    GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(builder, special[i].id));
+    if (btn)
+      g_signal_connect(btn, "clicked", special[i].cb, ctx);
+  }
 
-    /* 5. Configuration et Lancement du Terminal VTE */
-    if (ctx->terminal) {
-        vte_terminal_set_scroll_on_output(VTE_TERMINAL(ctx->terminal), TRUE);
-        vte_terminal_spawn_async(
-            VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL, 
-            (char *[]){CMD_NEOMUTT, NULL}, NULL, 
-            G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL, NULL, NULL
-        );
-        g_signal_connect(ctx->terminal, "child-exited", G_CALLBACK(on_terminal_child_exited), ctx);
+  /*--- RACCOURCIS CLAVIER GLOBAUX (À l'échelle de la fenêtre) ---*/
+  GtkAccelGroup *accel_group = gtk_accel_group_new();
+  gtk_window_add_accel_group(GTK_WINDOW(ctx->window), accel_group);
+
+  // Associer Ctrl+C à notre fonction de copie globale
+  gtk_accel_group_connect(
+      accel_group, GDK_KEY_c, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE,
+      g_cclosure_new(G_CALLBACK(on_global_copy_activated), ctx, NULL));
+
+  // Associer Ctrl+V à notre fonction de collage globale
+  gtk_accel_group_connect(
+      accel_group, GDK_KEY_v, GDK_CONTROL_MASK, GTK_ACCEL_VISIBLE,
+      g_cclosure_new(G_CALLBACK(on_global_paste_activated), ctx, NULL));
+
+  /*--- CRÉATION DU MENU CONTEXTUEL UNIQUE --*/
+  ctx->context_menu = gtk_menu_new();
+
+  GtkWidget *menu_item_copy = gtk_menu_item_new_with_label("Copier");
+  g_signal_connect(menu_item_copy, "activate",
+                   G_CALLBACK(on_global_copy_activated), ctx);
+  gtk_menu_shell_append(GTK_MENU_SHELL(ctx->context_menu), menu_item_copy);
+
+  GtkWidget *menu_item_paste = gtk_menu_item_new_with_label("Coller");
+  g_signal_connect(menu_item_paste, "activate",
+                   G_CALLBACK(on_global_paste_activated), ctx);
+  gtk_menu_shell_append(GTK_MENU_SHELL(ctx->context_menu), menu_item_paste);
+
+  // Rendre les éléments du menu visibles
+  gtk_widget_show_all(ctx->context_menu);
+
+  /*--- CAPTURER LE CLIC DROIT PARTOUT DANS LA FENÊTRE --*/
+  /*--- On autorise la fenêtre à intercepter les clics de souris ---*/
+  gtk_widget_add_events(ctx->window, GDK_BUTTON_PRESS_MASK);
+  g_signal_connect(ctx->window, "button-press-event",
+                   G_CALLBACK(on_window_button_press), ctx);
+
+  /* --- NOUVEAU : Gestion des images distantes --- */
+  struct {
+    const char *id;
+    gboolean allow;
+  } img_btns[] = {{"btn_img_on", TRUE}, {"btn_img_off", FALSE}};
+
+  for (size_t i = 0; i < G_N_ELEMENTS(img_btns); i++) {
+    GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, img_btns[i].id));
+    if (b) {
+      // On stocke la valeur TRUE/FALSE directement dans l'objet bouton
+      g_object_set_data(G_OBJECT(b), "allow-images",
+                        GINT_TO_POINTER(img_btns[i].allow));
+      g_signal_connect(b, "clicked", G_CALLBACK(on_toggle_images_clicked), ctx);
     }
+  }
 
-    /* 6. Widgets de Recherche */
-    ctx->search_entry = GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
-    ctx->search_combo = GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
-    ctx->date_combo   = GTK_WIDGET(gtk_builder_get_object(builder, "date_search_combo"));
+  /* --- connexion manuelle du signal */
+  GtkWidget *btn_view = GTK_WIDGET(gtk_builder_get_object(builder, "btn_view"));
+  if (btn_view) {
+    g_signal_connect(btn_view, "clicked", G_CALLBACK(on_view_html_clicked),
+                     ctx);
+  }
 
-    GtkWidget *btn_search = GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
-    if (btn_search) {
-        g_signal_connect(btn_search, "clicked", G_CALLBACK(on_search_clicked), ctx);
-        g_signal_connect(ctx->search_entry, "activate", G_CALLBACK(on_search_clicked), ctx);
-    }
+  GtkWidget *btn_img = GTK_WIDGET(gtk_builder_get_object(builder, "btn_img"));
+  if (btn_img) {
+    g_signal_connect(btn_img, "clicked", G_CALLBACK(on_toggle_images_clicked),
+                     ctx);
+  }
 
-    /* 7. Gestion des Dossiers (Sidebar) */
-    struct { const char *id; const char *macro; } folders[] = {
-        {"btn_inbox", MACRO_INBOX}, {"btn_sent", MACRO_SENT}, {"btn_locale", MACRO_LOCALE},
-        {"btn_trash", MACRO_TRASH}, {"btn_draft", MACRO_DRAFT}, 
-        {"btn_quarantine", MACRO_QUAR}, {"btn_archives", MACRO_ARCHIVES}
-    };
+  GtkWidget *btn_back = GTK_WIDGET(gtk_builder_get_object(builder, "btn_back"));
+  if (btn_back) {
+    g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back_clicked), ctx);
+  }
 
-    for(size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
-        GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i].id));
-        ctx->folder_buttons[i] = b; 
-        if(b) {
-            g_object_set_data(G_OBJECT(b), "ctx", ctx);
-            g_signal_connect(b, "clicked", G_CALLBACK(on_folder_clicked), (gpointer)folders[i].macro);
-        }
-    }
+  /* 10. Finalisation et Affichage */
+  if (ctx->window) {
+    g_signal_connect(ctx->window, "key-press-event", G_CALLBACK(on_key_press),
+                     ctx);
+    gtk_widget_show_all(ctx->window);
+    gtk_window_maximize(GTK_WINDOW(ctx->window));
+  }
 
-    /* 8. Boutons d'Action (Raccourcis clavier) */
-    struct { const char *id; const char *key; } shortcuts[] = {
-        {"btn_prev", KEY_PREV}, {"btn_next", KEY_NEXT}, {"btn_enter", "\n"},
-        {"btn_write", KEY_WRITE}, {"btn_reply", KEY_REPLY}, {"btn_reply_all", KEY_REPLY_ALL}, {"btn_del", KEY_DEL}
-    };
-    for (size_t i = 0; i < G_N_ELEMENTS(shortcuts); i++) {
-        GtkWidget *obj = GTK_WIDGET(gtk_builder_get_object(builder, shortcuts[i].id));
-        if (obj) {
-            g_object_set_data(G_OBJECT(obj), "key-to-send", (gpointer)shortcuts[i].key);
-            g_signal_connect(obj, "clicked", G_CALLBACK(on_action_clicked), ctx);
-        }
-    }
+  if (ctx->terminal) {
+    gtk_widget_grab_focus(ctx->terminal);
+  }
 
-    /* 9. Boutons de navigation/outils */
-    struct { const char *id; GCallback cb; } special[] = {
-        {"btn_help", G_CALLBACK(on_help_clicked)},
-        {"btn_stop", G_CALLBACK(on_stop_clicked)},
-        {"btn_sync", G_CALLBACK(on_refresh_clicked)}
-    };
-    for (size_t i = 0; i < G_N_ELEMENTS(special); i++) {
-        GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(builder, special[i].id));
-        if(btn) g_signal_connect(btn, "clicked", special[i].cb, ctx);
-    }
-
-    /* --- connexion manuelle du signal */
-    GtkWidget *btn_view = GTK_WIDGET(gtk_builder_get_object(builder, "btn_view"));
-    if (btn_view) {
-        g_signal_connect(btn_view, "clicked", G_CALLBACK(on_view_html_clicked), ctx);
-    }
-
-    GtkWidget *btn_back = GTK_WIDGET(gtk_builder_get_object(builder, "btn_back"));
-    if (btn_back) {
-        g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back_clicked), ctx);
-    }
-
-    /* 10. Finalisation et Affichage */
-    if (ctx->window) {
-        g_signal_connect(ctx->window, "key-press-event", G_CALLBACK(on_key_press), ctx);
-        gtk_widget_show_all(ctx->window);
-        gtk_window_maximize(GTK_WINDOW(ctx->window));
-    }
-    
-    if (ctx->terminal) {
-        gtk_widget_grab_focus(ctx->terminal);
-    }
-
-    return 1;
+  return 1;
 }
 
 /* --- MAIN --- */
 int main(int argc, char *argv[]) {
-    // 1. Nommer le processus (utile pour 'top' ou 'ps')
-    prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
+  // 1. Nommer le processus (utile pour 'top' ou 'ps')
+  prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
 
-    // 2. Initialisation de GTK
-    gtk_init(&argc, &argv);
+  // 2. Initialisation de GTK
+  gtk_init(&argc, &argv);
 
-    // 3. Initialisation du contexte
-    // Il est conseillé de mettre la structure à zéro pour éviter les pointeurs sauvages
-    AppContext ctx;
-    memset(&ctx, 0, sizeof(AppContext));
+  // 3. Initialisation du contexte
+  // Il est conseillé de mettre la structure à zéro pour éviter les pointeurs
+  // sauvages
+  AppContext ctx;
+  memset(&ctx, 0, sizeof(AppContext));
 
-    // 4. Création du Builder
-    GtkBuilder *builder = gtk_builder_new();
+  // 4. Création du Builder
+  GtkBuilder *builder = gtk_builder_new();
 
-    // 5. Chargement de l'interface
-    if (!init_gui(&ctx, builder)) {
-        g_printerr(ERR_BUILDER);
-        g_object_unref(builder);
-        return 1;
-    }
-
-    /** Libération du builder MAINTENANT
-    * L'interface GTK reste en vie
-    * car ctx contient les pointeurs directs. */
+  // 5. Chargement de l'interface
+  if (!init_gui(&ctx, builder)) {
+    g_printerr(ERR_BUILDER);
     g_object_unref(builder);
-    
-    // 6. Boucle principale
-    gtk_main();
+    return 1;
+  }
 
+  /** Libération du builder MAINTENANT
+   * L'interface GTK reste en vie
+   * car ctx contient les pointeurs directs. */
+  g_object_unref(builder);
 
-    return 0;
+  // 6. Boucle principale
+  gtk_main();
+
+  return 0;
 }

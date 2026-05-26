@@ -225,7 +225,7 @@
                       </packing>
                     </child>
                     <style>
-                      <class name="linked" />
+                      <class name="linked"/>
                     </style>
                   </object>
                   <packing>
@@ -491,7 +491,7 @@
                 <property name="border-width">5</property>
                 <child>
                   <object class="GtkButton" id="btn_back">
-                    <property name="label" translatable="yes">⬅️ Retour au Terminal</property>
+                    <property name="label" translatable="yes">⬅️ Retour</property>
                     <property name="visible">True</property>
                     <property name="can-focus">False</property>
                     <property name="receives-default">False</property>
@@ -501,6 +501,51 @@
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="position">0</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_img">
+                    <property name="label" translatable="yes">🖼️ Images</property>
+                    <property name="name">Autoriser chargement images</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Autoriser chargement images</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">1</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_pdf">
+                    <property name="label" translatable="yes">📜 PDF</property>
+                    <property name="name">Générer pdf</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Revenir à NeoMutt (Échap)</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">2</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_save">
+                    <property name="label" translatable="yes">💾 Sauvegarder</property>
+                    <property name="name">Sauvegarder courriel</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Revenir à NeoMutt (Échap)</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">3</property>
                   </packing>
                 </child>
               </object>
