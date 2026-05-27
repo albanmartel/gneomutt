@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=gneomuut
+Comment=Send and receive mail with neomutt
+Exec=gneomutt %u
+Terminal=false
+Type=Application
+Icon=gneomutt
+Categories=Network;Email;
+MimeType=message/rfc822;x-scheme-handler/mailto;text/calendar;text/vcard;text/x-vcard;x-scheme-handler/webcal;x-scheme-handler/webcals;x-scheme-handler/mid;
+StartupNotify=true
+StartupWMClass=neomutt
+Actions=ComposeMessage;OpenAddressBook;
