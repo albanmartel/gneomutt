@@ -1,4 +1,5 @@
 TARGET = gneomutt
+TOOLS = eml_to_html eml_to_txt
 CC = clang
 # On passe en -O3 pour une optimisation maximale
 CFLAGS = -Wall -Wextra -O3
@@ -8,9 +9,18 @@ GTK_PKG = gtk+-3.0
 VTE_PKG = $(shell pkg-config --list-all | grep vte | cut -d' ' -f1 | head -n 1)
 # Pour WebKitGTK sous GTK3, c'est généralement webkit2gtk-4.0 ou 4.1
 WEBKIT_PKG = $(shell pkg-config --list-all | grep webkit2gtk | cut -d' ' -f1 | head -n 1)
+GMIME_PKG = gmime-3.0
 
 # Liste consolidée
 PKGS = $(GTK_PKG) $(VTE_PKG) $(WEBKIT_PKG)
+
+# Séparation des drapeaux récupérés dynamiquement par PKGS
+CFLAGS += $(shell pkg-config --cflags $(PKGS))
+LIBS += $(shell pkg-config --libs $(PKGS))
+
+# Drapeaux spécifiques et légers pour les deux outils GMime
+TOOL_CFLAGS = -Wall -Wextra -O3 $(shell pkg-config --cflags $(GMIME_PKG))
+TOOL_LIBS = $(shell pkg-config --libs $(GMIME_PKG))
 
 # 2. Récupération des drapeaux via pkg-config
 PREFIX = /usr/local
@@ -19,8 +29,8 @@ APPDIR = $(PREFIX)/share/applications
 SYSTEM_ICONDIR = $(PREFIX)/share/icons/hicolor
 
 # Séparation des drapeaux pour plus de clarté
-CFLAGS += $(shell pkg-config --cflags gtk+-3.0 vte-2.91 webkit2gtk-4.1)
-LIBS += $(shell pkg-config --libs gtk+-3.0 vte-2.91 webkit2gtk-4.1)
+CFLAGS += $(shell pkg-config --cflags gmime-3.0 gio-2.0 gio-unix-2.0 glib-2.0)
+LIBS   += $(shell pkg-config --libs gmime-3.0 gio-2.0 gio-unix-2.0 glib-2.0)
 
 # 3. Ajout de -rdynamic pour lier les signaux du XML (GtkBuilder)
 LDFLAGS = $(LIBS) -rdynamic
@@ -33,31 +43,43 @@ RES_SRC = resources.c
 RES_OBJ = $(RES_SRC:.c=.o)
 
 # Liste des outils externes nécessaires au runtime
-DEPENDENCIES = neomutt mbsync notmuch msmtp
+DEPENDENCIES = neomutt mbsync notmuch msmtp w3m
 
 # --- RÈGLES ---
 
-all: $(TARGET)
+all: $(TARGET) $(TOOLS)
 
-# 1. Règle pour générer le fichier C à partir du XML
+# Règle pour générer le fichier C à partir du XML
 $(RES_SRC): $(RES_XML) $(DATADIR)/interface.ui $(DATADIR)/icons/scalable/gneomutt.svg
 	glib-compile-resources $(RES_XML) --target=$(RES_SRC) --sourcedir=$(DATADIR) --generate-source
 
-# 2. Règle de compilation principale
+# Règle de compilation principale
 $(TARGET): $(SRC) $(RES_SRC)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
+
+# Règle de compilation spécifique pour eml_to_html
+eml_to_html: src/eml_to_html.c
+	$(CC) $(TOOL_CFLAGS) src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
+
+# Règle de compilation spécifique pour eml_to_txt
+eml_to_txt: src/eml_to_txt.c
+	$(CC) $(TOOL_CFLAGS) src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
+
 
 # Vérifie si tous les outils nécessaires sont installés
 check-deps:
 	@echo "Vérification des dépendances système..."
 	@$(foreach bin,$(DEPENDENCIES),\
 		which $(bin) > /dev/null 2>&1 || (echo "ERREUR: '$(bin)' n'est pas installé."; exit 1);)
-	@echo "Toutes les dépendances sont présentes." [cite: 3]
+	@pkg-config --exists $(GMIME_PKG) || (echo "ERREUR: '$(GMIME_PKG)' est manquant. Installez gmime3 avec pacman."; exit 1);
+	@echo "Toutes les dépendances sont présentes."
 
 # Règle Debug : Correction de $(GTK_FLAGS) en $(GTK_CFLAGS) $(LIBS) 
 debug: clean
-	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(GTK_CFLAGS) $(LIBS)
-	@echo "Mode Debug activé. Utilisez 'gdb ./$(TARGET)' pour déboguer." 
+	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(LIBS)
+	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
+	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
+	@echo "Mode Debug activé pour l'application et ses outils."
 
 # Règle Test : Correction des indentations (Tabulations) 
 test: all
@@ -87,6 +109,8 @@ install: all
 	@echo "Vérification des droits d'administration..." 
 # 1. Installation du binaire
 	sudo install -Dm755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
+	sudo install -Dm755 eml_to_html $(DESTDIR)$(BINDIR)/eml_to_html
+	sudo install -Dm755 eml_to_txt $(DESTDIR)$(BINDIR)/eml_to_txt
 	
 # 2. Installation du raccourci de bureau
 	sudo install -Dm644 $(DATADIR)/gneomutt.desktop $(DESTDIR)$(APPDIR)/$(TARGET).desktop
@@ -107,6 +131,8 @@ uninstall:
 	@echo "Vérification des droits d'administration..."
 # Supprime le binaire et le raccourci
 	sudo rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_html
+	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_txt
 	sudo rm -f $(DESTDIR)$(APPDIR)/$(TARGET).desktop
 	
 # Supprime l'icône SVG
@@ -122,7 +148,7 @@ uninstall:
 	@echo "Désinstallation de $(TARGET) terminée proprement."
 
 clean:
-	rm -f $(TARGET) $(RES_SRC) $(RES_OBJ)
+	rm -f $(TARGET) $(TOOLS) $(RES_SRC) $(RES_OBJ)
 
 run: all
 	./$(TARGET)
