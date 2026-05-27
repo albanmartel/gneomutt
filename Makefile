@@ -24,7 +24,7 @@ LIBS += $(shell pkg-config --libs gtk+-3.0 vte-2.91 webkit2gtk-4.1)
 LDFLAGS = $(LIBS) -rdynamic
 
 SRC = gneomutt.c
-RES_XML = resources.xml
+RES_XML = data/resources.xml
 RES_SRC = resources.c
 # Fichiers générés par glib-compile-resources
 RES_OBJ = $(RES_SRC:.c=.o)
