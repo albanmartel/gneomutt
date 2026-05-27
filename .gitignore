@@ -1,5 +1,7 @@
 # === EXÉCUTABLES ET BINAIRES ===
 gneomutt
+eml_to_html
+eml_to_txt
 *.o
 *.out
 *.so

@@ -16,7 +16,9 @@
 #define PROGRAMME_NAME "gneomutt"
 #define UI_FILE "interface.ui"
 #define CMD_NEOMUTT "/usr/bin/neomutt"
+#define CMD_EMLTOMAIL "/usr/local/bin/eml_to_html"
 #define CMD_SYNC "mbsync -a && notmuch new &"
+#define LOCAL_EML "/tmp/mail.eml"
 #define LOCAL_HTML "/tmp/mutt_render/index.html"
 
 #define MACRO_INBOX "gi"
@@ -33,7 +35,7 @@
 #define KEY_WRITE "m"
 #define KEY_REPLY "r"
 #define KEY_REPLY_ALL "g"
-#define KEY_VIEW "V"
+#define KEY_VIEW "X"
 
 /*--- Taille tableau des pointeurs de dossiers ---*/
 #define NB_FOLDERS 7
@@ -86,6 +88,7 @@ typedef struct {
   GtkWidget *web_view;
   WebKitSettings *web_settings;
   GtkWidget *context_menu;
+  gboolean html_generation_in_progress;
 } AppContext;
 
 /* --- CONFIGURATION DES TOUCHES (Arrow Keys Mapping) --- */
@@ -128,12 +131,59 @@ void update_active_folder_ui(GtkWidget *active_button, AppContext *ctx) {
 }
 
 /* --- CALLBACKS --- */
-void on_terminal_child_exited(VteTerminal *terminal, int status,
-                              gpointer user_data) {
-  (void)terminal;
-  (void)status;
-  (void)user_data;
-  gtk_main_quit();
+// Fonction utilitaire centralisée
+void perform_html_conversion(AppContext *ctx) {
+  DEBUG_LOG("Tentative de conversion de %s vers %s", LOCAL_EML, LOCAL_HTML);
+
+  if (!g_file_test(LOCAL_EML, G_FILE_TEST_EXISTS)) {
+    g_warning("Fichier source introuvable : %s", LOCAL_EML);
+    return;
+  }
+
+  gchar *dir = g_path_get_dirname(LOCAL_HTML);
+  g_mkdir_with_parents(dir, 0700);
+  g_free(dir);
+
+  // UTILISEZ LE CHEMIN COMPLET SI NÉCESSAIRE (ex: /usr/local/bin/eml-to-html)
+  gchar *cmd =
+      g_strdup_printf("%s \"%s\" \"%s\"", CMD_EMLTOMAIL, LOCAL_EML, LOCAL_HTML);
+
+  gint exit_status;
+  GError *error = NULL;
+
+  if (g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error)) {
+    if (exit_status == 0) {
+      DEBUG_LOG("Conversion réussie.");
+      gchar *uri = g_filename_to_uri(LOCAL_HTML, NULL, NULL);
+      webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), uri);
+      gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "html_page");
+      g_free(uri);
+    } else {
+      g_warning("La commande a échoué avec le code : %d", exit_status);
+    }
+  } else {
+    g_warning("Échec total d'exécution : %s", error->message);
+    g_error_free(error);
+  }
+  g_free(cmd);
+}
+
+// Vos callbacks deviennent alors très simples
+void on_terminal_child_exited(VteTerminal *G_GNUC_UNUSED t, int G_GNUC_UNUSED s,
+                              gpointer d) {
+  AppContext *ctx = (AppContext *)d;
+
+  if (ctx && ctx->html_generation_in_progress) {
+    perform_html_conversion(ctx);
+    ctx->html_generation_in_progress = FALSE;
+  } else {
+    gtk_main_quit();
+  }
+}
+
+gboolean on_terminal_child_exited_timer(AppContext *ctx) {
+  perform_html_conversion(ctx);
+  return FALSE;
 }
 
 void on_help_clicked(GtkButton *btn, gpointer user_data) {
@@ -328,36 +378,12 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
   gtk_widget_grab_focus(ctx->terminal);
 }
 
-void on_view_html_clicked(GtkWidget *widget, gpointer user_data) {
-  (void)widget;
+void on_view_html_clicked(GtkWidget *G_GNUC_UNUSED widget, gpointer user_data) {
   AppContext *ctx = (AppContext *)user_data;
-
-  // Lance l'action (Rappel : KEY_VIEW doit finir par " && exit\n")
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), KEY_VIEW, -1);
 
-  // 1. Définition du chemin local
-  const char *path = LOCAL_HTML;
-
-  // 2. Vérification de l'existence du fichier avant chargement
-  if (!g_file_test(path, G_FILE_TEST_EXISTS)) {
-    g_warning("Le fichier HTML n'existe pas encore : %s", path);
-    // Optionnel : afficher un message à l'utilisateur ici
-    return;
-  }
-
-  // 3. Conversion du chemin local en URI (file://...)
-  gchar *uri = g_filename_to_uri(path, NULL, NULL);
-
-  if (uri) {
-    DEBUG_LOG("Chargement du message local : %s", uri);
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), uri);
-    g_free(uri);
-  }
-
-  // 4. Mise à jour de l'interface (votre logique originale)
-  gtk_widget_show(ctx->web_view);
-  gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "html_page");
-  gtk_widget_show_all(ctx->main_stack);
+  // On laisse 800ms à Mutt pour générer le fichier, puis on force l'affichage
+  g_timeout_add(800, (GSourceFunc)on_terminal_child_exited_timer, ctx);
 }
 
 void on_back_clicked(GtkWidget *widget, gpointer user_data) {
@@ -472,12 +498,27 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   GtkWidget *web_container =
       GTK_WIDGET(gtk_builder_get_object(builder, "web_container"));
   if (web_container) {
+    // AJOUTEZ CES DEUX LIGNES POUR FORCER L'EXPANSION
+    gtk_widget_set_vexpand(web_container, TRUE);
+    gtk_widget_set_valign(web_container, GTK_ALIGN_FILL);
+
     ctx->web_view = webkit_web_view_new();
 
     // Initialisation des réglages
-    ctx->web_settings = webkit_settings_new();
-    // Par défaut, on bloque pour la vie privée
-    webkit_settings_set_auto_load_images(ctx->web_settings, FALSE);
+    webkit_settings_set_allow_file_access_from_file_urls(ctx->web_settings,
+                                                         TRUE);
+    webkit_settings_set_allow_universal_access_from_file_urls(ctx->web_settings,
+                                                              TRUE);
+
+    // 2. Autoriser l'affichage des images
+    webkit_settings_set_auto_load_images(ctx->web_settings, TRUE);
+
+    // 3. Forcer l'encodage UTF-8 pour les accents
+    webkit_settings_set_default_charset(ctx->web_settings, "UTF-8");
+
+    // 4. Activer les outils de dev (clic droit -> inspecter) pour déboguer
+    webkit_settings_set_enable_developer_extras(ctx->web_settings, TRUE);
+
     webkit_web_view_set_settings(WEBKIT_WEB_VIEW(ctx->web_view),
                                  ctx->web_settings);
 
