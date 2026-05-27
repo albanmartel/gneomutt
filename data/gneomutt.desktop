@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=gneomuut
+Name=gneomutt
 Comment=Send and receive mail with neomutt
 Exec=gneomutt %u
 Terminal=false
@@ -10,3 +10,4 @@ MimeType=message/rfc822;x-scheme-handler/mailto;text/calendar;text/vcard;text/x-
 StartupNotify=true
 StartupWMClass=neomutt
 Actions=ComposeMessage;OpenAddressBook;
+Path=
