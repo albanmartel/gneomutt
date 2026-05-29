@@ -1,8 +1,12 @@
+#include <dirent.h>
+#include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <unistd.h>
 #include <vte/vte.h>
 #include <webkit2/webkit2.h>
 
@@ -20,6 +24,7 @@
 #define CMD_SYNC "mbsync -a && notmuch new &"
 #define LOCAL_EML "/tmp/mail.eml"
 #define LOCAL_HTML "/tmp/mutt_render/index.html"
+#define LOCAL_ASSETS "/tmp/mutt_render/eml_assets/"
 
 #define MACRO_INBOX "gi"
 #define MACRO_SENT "go"
@@ -36,6 +41,11 @@
 #define KEY_REPLY "r"
 #define KEY_REPLY_ALL "g"
 #define KEY_VIEW "X"
+
+/* --- Macros d'impression PDF ---*/
+#define GTK_PRINT_KEY_PRINT_BACKEND "print-backend"
+#define GTK_PRINT_KEY_OUTPUT_URI "output-uri"
+#define GTK_PRINT_KEY_OUTPUT_FILE_FORMAT "output-file-format"
 
 /*--- Taille tableau des pointeurs de dossiers ---*/
 #define NB_FOLDERS 7
@@ -89,6 +99,7 @@ typedef struct {
   WebKitSettings *web_settings;
   GtkWidget *context_menu;
   gboolean html_generation_in_progress;
+  GFileMonitor *file_monitor;
 } AppContext;
 
 /* --- CONFIGURATION DES TOUCHES (Arrow Keys Mapping) --- */
@@ -179,11 +190,6 @@ void on_terminal_child_exited(VteTerminal *G_GNUC_UNUSED t, int G_GNUC_UNUSED s,
   } else {
     gtk_main_quit();
   }
-}
-
-gboolean on_terminal_child_exited_timer(AppContext *ctx) {
-  perform_html_conversion(ctx);
-  return FALSE;
 }
 
 void on_help_clicked(GtkButton *btn, gpointer user_data) {
@@ -378,23 +384,104 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
   gtk_widget_grab_focus(ctx->terminal);
 }
 
+void on_file_created(GFileMonitor *monitor, GFile *file G_GNUC_UNUSED,
+                     GFile *other_file G_GNUC_UNUSED,
+                     GFileMonitorEvent event_type, gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  // On attend que l'écriture soit réellement terminée
+  if (event_type == G_FILE_MONITOR_EVENT_CREATED ||
+      event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) {
+
+    // On lance la conversion
+    perform_html_conversion(ctx);
+
+    // On nettoie
+    g_file_monitor_cancel(monitor);
+    g_object_unref(monitor);
+  }
+}
+
 void on_view_html_clicked(GtkWidget *G_GNUC_UNUSED widget, gpointer user_data) {
   AppContext *ctx = (AppContext *)user_data;
+
+  // 1. Envoyer la commande au terminal
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), KEY_VIEW, -1);
 
-  // On laisse 800ms à Mutt pour générer le fichier, puis on force l'affichage
-  g_timeout_add(800, (GSourceFunc)on_terminal_child_exited_timer, ctx);
+  // 2. Préparer la surveillance du fichier de destination
+  GFile *file = g_file_new_for_path(LOCAL_EML);
+  GFileMonitor *monitor =
+      g_file_monitor_file(file, G_FILE_MONITOR_NONE, NULL, NULL);
+
+  // 3. Connecter le signal
+  g_signal_connect(monitor, "changed", G_CALLBACK(on_file_created), ctx);
+
+  g_object_unref(file);
+}
+
+void vider_repertoire(const char *chemin) {
+  DIR *d = opendir(chemin);
+  struct dirent *p;
+  char path_complet[1024];
+
+  if (!d)
+    return;
+
+  while ((p = readdir(d)) != NULL) {
+    // On ignore les dossiers spéciaux "." et ".."
+    if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, ".."))
+      continue;
+
+    // On construit le chemin complet
+    snprintf(path_complet, sizeof(path_complet), "%s/%s", chemin, p->d_name);
+
+    // On supprime l'élément (cette version simple ne gère pas les
+    // sous-dossiers) Pour gérer les sous-dossiers, il faudrait appeler la
+    // fonction récursivement ici
+    if (remove(path_complet) == 0) {
+      printf("Supprime : %s\n", path_complet);
+    } else {
+      printf("Impossible de supprimer : %s\n", path_complet);
+    }
+  }
+  closedir(d);
 }
 
 void on_back_clicked(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   AppContext *ctx = (AppContext *)user_data;
 
+  // Supprimer les fichiers eml et html
+  remove(LOCAL_HTML);
+  remove(LOCAL_EML);
+  vider_repertoire(LOCAL_ASSETS);
+
   // Revenir à l'interface NeoMutt
   gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "neomutt_page");
 
   // Redonner le focus au terminal pour pouvoir continuer à utiliser le clavier
   gtk_widget_grab_focus(ctx->terminal);
+}
+
+void on_print_pdf_clicked(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
+  AppContext *ctx = (AppContext *)user_data;
+
+  if (!ctx->web_view) {
+    g_printerr("Erreur: web_view n'existe pas !\n");
+    return;
+  }
+
+  // 1. Créer l'opération d'impression pour cette vue
+  WebKitPrintOperation *print_operation =
+      webkit_print_operation_new(WEBKIT_WEB_VIEW(ctx->web_view));
+
+  // 2. Lancer la boîte de dialogue d'impression standard GTK
+  // La fonction retourne un résultat (WEBKIT_PRINT_OPERATION_RESPONSE_PRINT ou
+  // CANCEL)
+  webkit_print_operation_run_dialog(print_operation, GTK_WINDOW(ctx->window));
+
+  // 3. Nettoyage
+  g_object_unref(print_operation);
 }
 
 void on_toggle_images_clicked(GtkWidget *button, gpointer user_data) {
@@ -489,6 +576,11 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     return 0;
   }
 
+  // Supprimer les fichiers eml et html
+  remove(LOCAL_HTML);
+  remove(LOCAL_EML);
+  vider_repertoire(LOCAL_ASSETS);
+
   /* 2. Récupération des widgets principaux */
   ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
   ctx->main_stack = GTK_WIDGET(gtk_builder_get_object(builder, "main_stack"));
@@ -503,6 +595,9 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     gtk_widget_set_valign(web_container, GTK_ALIGN_FILL);
 
     ctx->web_view = webkit_web_view_new();
+
+    // 1. Initialiser l'objet settings AVANT de l'utiliser
+    ctx->web_settings = webkit_settings_new();
 
     // Initialisation des réglages
     webkit_settings_set_allow_file_access_from_file_urls(ctx->web_settings,
@@ -519,6 +614,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     // 4. Activer les outils de dev (clic droit -> inspecter) pour déboguer
     webkit_settings_set_enable_developer_extras(ctx->web_settings, TRUE);
 
+    // Appliquer les réglages
     webkit_web_view_set_settings(WEBKIT_WEB_VIEW(ctx->web_view),
                                  ctx->web_settings);
 
@@ -690,6 +786,11 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   if (btn_img) {
     g_signal_connect(btn_img, "clicked", G_CALLBACK(on_toggle_images_clicked),
                      ctx);
+  }
+
+  GtkWidget *btn_pdf = GTK_WIDGET(gtk_builder_get_object(builder, "btn_pdf"));
+  if (btn_pdf) {
+    g_signal_connect(btn_pdf, "clicked", G_CALLBACK(on_print_pdf_clicked), ctx);
   }
 
   GtkWidget *btn_back = GTK_WIDGET(gtk_builder_get_object(builder, "btn_back"));
