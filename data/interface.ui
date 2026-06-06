@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated with glade 3.40.0 -->
 <interface>
-  <requires lib="gtk+" version="3.20" />
-  <requires lib="vte-2.91" version="0.82" />
+  <requires lib="gtk+" version="3.20"/>
+  <requires lib="vte-2.91" version="0.82"/>
   <object class="GtkWindow" id="window">
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">NeoMutt - alban.f.j.martel@laposte.net</property>
     <property name="default-width">1000</property>
     <property name="default-height">700</property>
-    <signal name="destroy" handler="gtk_main_quit" swapped="no" />
+    <signal name="destroy" handler="gtk_main_quit" swapped="no"/>
     <child>
       <object class="GtkStack" id="main_stack">
         <property name="visible">True</property>
@@ -33,12 +33,27 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text" translatable="yes">Synchroniser</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="position">0</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_return">
+                    <property name="label" translatable="yes">⬅️</property>
+                    <property name="name">return</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Revenir à boite parente</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">1</property>
                   </packing>
                 </child>
                 <child>
@@ -49,12 +64,12 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Précédent</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">1</property>
+                    <property name="position">2</property>
                   </packing>
                 </child>
                 <child>
@@ -65,12 +80,12 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Suivant</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">2</property>
+                    <property name="position">3</property>
                   </packing>
                 </child>
                 <child>
@@ -81,12 +96,12 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Selection</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">3</property>
+                    <property name="position">4</property>
                   </packing>
                 </child>
                 <child>
@@ -97,22 +112,6 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Voir courriel</property>
-                  </object>
-                  <packing>
-                    <property name="expand">False</property>
-                    <property name="fill">True</property>
-                    <property name="position">4</property>
-                  </packing>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_reply">
-                    <property name="label">↪️</property>
-                    <property name="name">reply</property>
-                    <property name="visible">True</property>
-                    <property name="can-focus">True</property>
-                    <property name="receives-default">False</property>
-                    <property name="tooltip-text">Répondre</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -128,7 +127,7 @@
                     <property name="can-focus">False</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Quitter</property>
-                    <signal name="clicked" handler="on_stop_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_stop_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -235,6 +234,22 @@
                   </packing>
                 </child>
                 <child>
+                  <object class="GtkButton" id="btn_reply">
+                    <property name="label">↪️</property>
+                    <property name="name">reply</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Répondre</property>
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">8</property>
+                  </packing>
+                </child>
+                <child>
                   <object class="GtkButton" id="btn_reply_all">
                     <property name="label">👨‍👩‍👧‍👦</property>
                     <property name="name">groupe</property>
@@ -242,12 +257,12 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Répondre à tous</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">8</property>
+                    <property name="position">9</property>
                   </packing>
                 </child>
                 <child>
@@ -258,12 +273,12 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Écrire</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">9</property>
+                    <property name="position">10</property>
                   </packing>
                 </child>
                 <child>
@@ -274,16 +289,13 @@
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
                     <property name="tooltip-text">Supprimer</property>
-                    <signal name="clicked" handler="on_action_clicked" swapped="no" />
+                    <signal name="clicked" handler="on_action_clicked" swapped="no"/>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
-                    <property name="position">10</property>
+                    <property name="position">11</property>
                   </packing>
-                </child>
-                <child>
-                  <placeholder />
                 </child>
               </object>
               <packing>
@@ -560,7 +572,7 @@
                 <property name="visible">True</property>
                 <property name="can-focus">False</property>
                 <child>
-                  <placeholder />
+                  <placeholder/>
                 </child>
               </object>
               <packing>
