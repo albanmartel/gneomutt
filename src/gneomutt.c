@@ -35,6 +35,7 @@
 #define MACRO_LOCALE "gl"
 
 #define KEY_DEL "d"
+#define KEY_RETURN "i"
 #define KEY_NEXT "j"
 #define KEY_PREV "k"
 #define KEY_WRITE "m"
@@ -114,6 +115,42 @@ static const KeyMapping arrow_map[] = {
     {GDK_KEY_Up, "-"},    // Up Arrow
     {GDK_KEY_Down, " "}   // Down Arrow (Space)
 };
+
+/* Définition des boutons de navigations (barre du haut) */
+struct {
+  const char *id;
+  const char *key;
+} shortcuts[] = {{"btn_return", KEY_RETURN},
+                 {"btn_prev", KEY_PREV},
+                 {"btn_next", KEY_NEXT},
+                 {"btn_enter", "\n"},
+                 {"btn_write", KEY_WRITE},
+                 {"btn_reply", KEY_REPLY},
+                 {"btn_reply_all", KEY_REPLY_ALL},
+                 {"btn_del", KEY_DEL},
+                 {"btn_view", KEY_VIEW}};
+;
+
+/* Définition des boutons de boîtes (colonne de gauche) */
+struct {
+  const char *id;
+  const char *macro;
+} folders[] = {{"btn_inbox", MACRO_INBOX},      {"btn_sent", MACRO_SENT},
+               {"btn_locale", MACRO_LOCALE},    {"btn_trash", MACRO_TRASH},
+               {"btn_draft", MACRO_DRAFT},      {"btn_quarantine", MACRO_QUAR},
+               {"btn_archives", MACRO_ARCHIVES}};
+
+/* La définition des boutons navigation/outils "special" un peu partout */
+/* Impossible de mettre la définition ici avant celle des callbacks*/
+/* Mise en commentaire pour augmenter la lisibilité de attribution des boutons*/
+/*
+  struct {
+    const char *id;
+    GCallback cb;
+  } special[] = {{"btn_help", G_CALLBACK(on_help_clicked)},
+                 {"btn_stop", G_CALLBACK(on_stop_clicked)},
+                 {"btn_sync", G_CALLBACK(on_refresh_clicked)}};
+*/
 
 /* --- UTILITAIRES --- */
 void send_term_data(GtkWidget *terminal, const char *data) {
@@ -256,7 +293,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   /* --- SURCHARGE DES TOUCHES FLÉCHÉES --- */
   const char *cmd = NULL;
 
-  /* Associer le tableau de configuration aux nouveaux raccourci clavier */
+  /* Associer le tableau de configuration aux nouveaux raccourcis clavier */
   for (size_t i = 0; i < G_N_ELEMENTS(arrow_map); i++) {
     if (event->keyval == arrow_map[i].keyval) {
       cmd = arrow_map[i].command;
@@ -672,15 +709,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   }
 
   /* 7. Gestion des Dossiers (Sidebar) */
-  struct {
-    const char *id;
-    const char *macro;
-  } folders[] = {
-      {"btn_inbox", MACRO_INBOX},      {"btn_sent", MACRO_SENT},
-      {"btn_locale", MACRO_LOCALE},    {"btn_trash", MACRO_TRASH},
-      {"btn_draft", MACRO_DRAFT},      {"btn_quarantine", MACRO_QUAR},
-      {"btn_archives", MACRO_ARCHIVES}};
-
+  /* La définition des boutons "folders" est au début */
   for (size_t i = 0; i < G_N_ELEMENTS(folders); i++) {
     GtkWidget *b = GTK_WIDGET(gtk_builder_get_object(builder, folders[i].id));
     ctx->folder_buttons[i] = b;
@@ -692,14 +721,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   }
 
   /* 8. Boutons d'Action (Raccourcis clavier) */
-  struct {
-    const char *id;
-    const char *key;
-  } shortcuts[] = {{"btn_prev", KEY_PREV},   {"btn_next", KEY_NEXT},
-                   {"btn_enter", "\n"},      {"btn_write", KEY_WRITE},
-                   {"btn_reply", KEY_REPLY}, {"btn_reply_all", KEY_REPLY_ALL},
-                   {"btn_del", KEY_DEL},     {"btn_view", KEY_VIEW}};
-
+  /* La définition des boutons "shortcuts" est au début */
   for (size_t i = 0; i < G_N_ELEMENTS(shortcuts); i++) {
     GtkWidget *obj =
         GTK_WIDGET(gtk_builder_get_object(builder, shortcuts[i].id));
@@ -711,6 +733,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   }
 
   /* 9. Boutons de navigation/outils */
+  /* La définition des boutons "special" un peu partout */
   struct {
     const char *id;
     GCallback cb;
