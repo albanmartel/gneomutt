@@ -504,6 +504,7 @@
                 <child>
                   <object class="GtkButton" id="btn_back">
                     <property name="label" translatable="yes">⬅️ Retour</property>
+                    <property name="name">Retour</property>
                     <property name="visible">True</property>
                     <property name="can-focus">False</property>
                     <property name="receives-default">False</property>
@@ -537,7 +538,8 @@
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Revenir à NeoMutt (Échap)</property>
+                    <property name="tooltip-text" translatable="yes">Générer un pdf
+</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -552,12 +554,27 @@
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="receives-default">False</property>
-                    <property name="tooltip-text" translatable="yes">Revenir à NeoMutt (Échap)</property>
+                    <property name="tooltip-text" translatable="yes">Sauvegarder courriel</property>
                   </object>
                   <packing>
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="position">3</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_refresh">
+                    <property name="label" translatable="yes">🔁 Rafraîchir</property>
+                    <property name="name">Rafraîchir</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text" translatable="yes">Rafraîchir page web</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">4</property>
                   </packing>
                 </child>
               </object>
@@ -566,6 +583,9 @@
                 <property name="fill">True</property>
                 <property name="position">0</property>
               </packing>
+            </child>
+            <child>
+              <placeholder/>
             </child>
             <child>
               <object class="GtkBox" id="web_container">
@@ -578,7 +598,7 @@
               <packing>
                 <property name="expand">True</property>
                 <property name="fill">True</property>
-                <property name="position">1</property>
+                <property name="position">2</property>
               </packing>
             </child>
           </object>
