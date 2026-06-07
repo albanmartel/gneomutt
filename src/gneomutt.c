@@ -456,6 +456,20 @@ void on_view_html_clicked(GtkWidget *G_GNUC_UNUSED widget, gpointer user_data) {
   g_object_unref(file);
 }
 
+void on_refresh_viewhtml(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
+  // 1. On récupère notre structure globale AppContext
+  AppContext *ctx = (AppContext *)user_data;
+
+  if (ctx && ctx->web_view) {
+    DEBUG_LOG("Rafraîchir cliqué : Rechargement forcé du HTML existant.");
+
+    // 2. On force le rechargement en ignorant le cache
+    webkit_web_view_reload_bypass_cache(WEBKIT_WEB_VIEW(ctx->web_view));
+  } else {
+    g_warning("Impossible de rafraîchir : web_view non initialisée.");
+  }
+}
+
 void vider_repertoire(const char *chemin) {
   DIR *d = opendir(chemin);
   struct dirent *p;
@@ -803,22 +817,44 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   if (btn_view) {
     g_signal_connect(btn_view, "clicked", G_CALLBACK(on_view_html_clicked),
                      ctx);
+  } else {
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_view' n'existe pas !");
   }
 
   GtkWidget *btn_img = GTK_WIDGET(gtk_builder_get_object(builder, "btn_img"));
   if (btn_img) {
     g_signal_connect(btn_img, "clicked", G_CALLBACK(on_toggle_images_clicked),
                      ctx);
+  } else {
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_img' n'existe pas !");
   }
 
   GtkWidget *btn_pdf = GTK_WIDGET(gtk_builder_get_object(builder, "btn_pdf"));
   if (btn_pdf) {
     g_signal_connect(btn_pdf, "clicked", G_CALLBACK(on_print_pdf_clicked), ctx);
+  } else {
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_pdf' n'existe pas !");
   }
 
   GtkWidget *btn_back = GTK_WIDGET(gtk_builder_get_object(builder, "btn_back"));
   if (btn_back) {
     g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back_clicked), ctx);
+  } else {
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_back' n'existe pas !");
+  }
+
+  GtkWidget *btn_refresh =
+      GTK_WIDGET(gtk_builder_get_object(builder, "btn_refresh"));
+  if (btn_refresh) {
+    g_signal_connect(btn_refresh, "clicked", G_CALLBACK(on_refresh_viewhtml),
+                     ctx);
+  } else {
+    g_critical("Impossible de lier le callback : le bouton 'btn_refresh' "
+               "n'existe pas !");
   }
 
   /* 10. Finalisation et Affichage */
