@@ -74,12 +74,17 @@ check-deps:
 	@pkg-config --exists $(GMIME_PKG) || (echo "ERREUR: '$(GMIME_PKG)' est manquant. Installez gmime3 avec pacman."; exit 1);
 	@echo "Toutes les dépendances sont présentes."
 
-# Règle Debug : Correction de $(GTK_FLAGS) en $(GTK_CFLAGS) $(LIBS) 
+# Règle Debug corrigée pour l'ordre de génération
 debug: clean
-	$(CC) $(CFLAGS) -g -Og $(SRC) $(RES_SRC) -o $(TARGET) $(LIBS)
+	# 1. On force la regénération du fichier ressources après le clean
+	$(MAKE) $(RES_SRC)
+	# 2. On compile le programme principal et les outils avec les flags de debug
+	$(CC) $(CFLAGS) -g -Og $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
 	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
 	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
-	@echo "Mode Debug activé pour l'application et ses outils."
+	@echo "======================================================="
+	@echo "       Mode Debug activé avec succès (-g -Og)          "
+	@echo "======================================================="
 
 # Règle Test : Correction des indentations (Tabulations) 
 test: all
