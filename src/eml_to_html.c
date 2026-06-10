@@ -455,8 +455,13 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
       "        a:hover { text-decoration: underline; }\n"
       "    </style>\n</head>\n<body>\n"
       "    <h2>%s</h2>\n    <p>\n        %s\n    </p>\n    <hr>\n"
-      "    <div class=\"email-body\">\n        %s\n    </div>\n"
-      "    %s\n</body>\n</html>",
+      "    <div class=\"email-body\">\n"
+      "        <iframe sandbox=\"allow-same-origin\" srcdoc=\"%s\" "
+      "style=\"width: 100%%; height: 500px; border: 1px solid "
+      "#ccc;\"></iframe>\n"
+      "    </div>\n"
+      "    %s\n"
+      "</body>\n</html>",
       subject, subject, headers_html, final_body->str,
       attachments_section->str);
 
