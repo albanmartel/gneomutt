@@ -2,7 +2,7 @@
 <!-- Generated with glade 3.40.0 -->
 <interface>
   <requires lib="gtk+" version="3.20"/>
-  <requires lib="vte-2.91" version="0.82"/>
+  <requires lib="vte-2.91" version="0.84"/>
   <object class="GtkWindow" id="window">
     <property name="can-focus">False</property>
     <property name="title" translatable="yes">NeoMutt - alban.f.j.martel@laposte.net</property>
@@ -138,52 +138,36 @@
                       </packing>
                     </child>
                     <child>
-                      <object class="GtkBox" id="search_controls_box">
+                      <object class="GtkComboBoxText" id="search_options_combo">
                         <property name="visible">True</property>
                         <property name="can-focus">False</property>
-                        <property name="spacing">6</property>
-                        <child>
-                          <object class="GtkComboBoxText" id="search_options_combo">
-                            <property name="visible">True</property>
-                            <property name="can-focus">False</property>
-                            <property name="tooltip-text" translatable="yes">Rechercher dans...</property>
-                            <property name="active">0</property>
-                            <items>
-                              <item id="gen" translatable="yes">Général</item>
-                              <item id="from" translatable="yes">Expéditeur</item>
-                              <item id="sub" translatable="yes">Objet</item>
-                            </items>
-                          </object>
-                          <packing>
-                            <property name="expand">False</property>
-                            <property name="fill">True</property>
-                            <property name="position">0</property>
-                          </packing>
-                        </child>
-                        <child>
-                          <object class="GtkComboBoxText" id="date_search_combo">
-                            <property name="visible">True</property>
-                            <property name="can-focus">False</property>
-                            <property name="tooltip-text" translatable="yes">Filtrer par date</property>
-                            <property name="active">0</property>
-                            <items>
-                              <item id="any" translatable="yes">Toutes les dates</item>
-                              <item id="today" translatable="yes">Aujourd'hui</item>
-                              <item id="week" translatable="yes">7 derniers jours</item>
-                              <item id="month" translatable="yes">Ce mois-ci</item>
-                            </items>
-                          </object>
-                          <packing>
-                            <property name="expand">False</property>
-                            <property name="fill">True</property>
-                            <property name="position">1</property>
-                          </packing>
-                        </child>
+                        <property name="tooltip-text" translatable="yes">Critères de recherche...</property>
+                        <property name="active">0</property>
+                        <items>
+                          <item id="gen" translatable="yes">Général</item>
+                          <item id="from" translatable="yes">Expéditeur</item>
+                          <item id="sub" translatable="yes">Objet</item>
+                          <item id="body" translatable="yes">Corps</item>
+                        </items>
                       </object>
                       <packing>
                         <property name="expand">False</property>
                         <property name="fill">True</property>
                         <property name="position">1</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkEntry" id="main_date_entry">
+                        <property name="width-request">200</property>
+                        <property name="visible">True</property>
+                        <property name="can-focus">True</property>
+                        <property name="tooltip-text" translatable="yes">Champs de date</property>
+                        <property name="placeholder-text">2008 ou tody ou 7d (jours) ou 1m (mois)</property>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">True</property>
+                        <property name="position">2</property>
                       </packing>
                     </child>
                     <child>
@@ -203,7 +187,7 @@
                       <packing>
                         <property name="expand">False</property>
                         <property name="fill">True</property>
-                        <property name="position">2</property>
+                        <property name="position">3</property>
                       </packing>
                     </child>
                     <style>
@@ -481,7 +465,7 @@
                         <property name="visible">True</property>
                         <property name="can-focus">True</property>
                         <property name="encoding">UTF-8</property>
-                        <property name="scrollback-lines">10000</property>
+                        <property name="scrollback-lines">4294967295</property>
                         <property name="scroll-on-keystroke">True</property>
                         <property name="scroll-on-output">False</property>
                       </object>
@@ -591,6 +575,22 @@
                     <property name="expand">False</property>
                     <property name="fill">True</property>
                     <property name="position">4</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_pwoff">
+                    <property name="label" translatable="yes">🛑</property>
+                    <property name="name">quit</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Quitter</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="pack-type">end</property>
+                    <property name="position">5</property>
                   </packing>
                 </child>
               </object>
