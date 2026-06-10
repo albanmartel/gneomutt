@@ -79,11 +79,11 @@ debug: clean
 	# 1. On force la regénération du fichier ressources après le clean
 	$(MAKE) $(RES_SRC)
 	# 2. On compile le programme principal et les outils avec les flags de debug
-	$(CC) $(CFLAGS) -g -Og $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
-	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
-	$(CC) $(TOOL_CFLAGS) -g -Og src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
+	$(CC) $(CFLAGS) -g -O0 $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
+	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
 	@echo "======================================================="
-	@echo "       Mode Debug activé avec succès (-g -Og)          "
+	@echo "       Mode Debug activé avec succès (-g -O0)          "
 	@echo "======================================================="
 
 # Règle Test : Correction des indentations (Tabulations) 
