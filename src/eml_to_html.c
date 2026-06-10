@@ -1,11 +1,13 @@
 #include <glib.h>
 #include <gmime/gmime.h>
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define PROGRAMME_NAME "eml_to_html"
 
@@ -23,12 +25,23 @@ typedef struct {
 static gchar *html_escape(const gchar *text) {
   if (!text)
     return g_strdup("");
+
+  // Si le texte contient des caractères UTF-8 invalides, on nettoie
+  if (!g_utf8_validate(text, -1, NULL)) {
+    // Reconstruit une chaîne en remplaçant les caractères invalides par '?'
+    return g_utf8_make_valid(text, -1);
+  }
+
   return g_markup_escape_text(text, -1);
 }
 
 // Extraction propre des en-têtes textuels
 static gchar *get_clean_header_value(GMimeMessage *message,
                                      const char *header_name) {
+  // Style GLib : Vérifie la validité et logue une erreur si c'est NULL
+  g_return_val_if_fail(message != NULL, g_strdup(""));
+  g_return_val_if_fail(header_name != NULL, g_strdup(""));
+
   const char *value =
       g_mime_object_get_header(GMIME_OBJECT(message), header_name);
   if (!value)
@@ -39,12 +52,15 @@ static gchar *get_clean_header_value(GMimeMessage *message,
   if (!decoded)
     return g_strdup(value);
 
-  gchar *trimmed = g_strstrip(decoded);
-  return g_strdup(trimmed);
+  g_strstrip(decoded);
+  return decoded;
 }
 
 // Traduction de la date du message en français
 static gchar *parse_email_date_to_french(GMimeMessage *message) {
+  // 1. Sécurité : Vérification du pointeur d'entrée
+  g_return_val_if_fail(message != NULL, g_strdup(""));
+
   GDateTime *gdt = g_mime_message_get_date(message);
   if (!gdt)
     return g_strdup("");
@@ -56,9 +72,18 @@ static gchar *parse_email_date_to_french(GMimeMessage *message) {
                            "août",    "septembre", "octobre", "novembre",
                            "décembre"};
 
-  GDateWeekday wd = g_date_time_get_day_of_week(gdt); // 1 = lundi, 7 = dimanche
-  int day_idx = (wd == 7) ? 0 : wd; // Ajustement pour dimanche = index 0
-  int month_idx = g_date_time_get_month(gdt);
+  // 1 = lundi, 7 = dimanche selon GLib
+  GDateWeekday wd = g_date_time_get_day_of_week(gdt);
+  // Ajustement pour dimanche = index 0
+  int day_idx = (wd == 7) ? 0 : wd;
+  int month_idx =
+      g_mime_message_get_date(message) ? g_date_time_get_month(gdt) : 0;
+
+  // 2. Sécurité : Validation des indices des tableaux (au cas où)
+  if (day_idx < 0 || day_idx > 6 || month_idx < 1 || month_idx > 12) {
+    // Si la date extraite est invalide ou corrompue, on évite le crash
+    return g_strdup("");
+  }
 
   return g_strdup_printf("%s %02d %s %04d à %02d:%02d", jours_fr[day_idx],
                          g_date_time_get_day_of_month(gdt), mois_fr[month_idx],
@@ -68,6 +93,9 @@ static gchar *parse_email_date_to_french(GMimeMessage *message) {
 
 // Génération du bloc HTML regroupant les en-têtes principaux
 static gchar *generate_headers_html(GMimeMessage *message) {
+  // 1. Sécurité : Vérification du pointeur d'entrée
+  g_return_val_if_fail(message != NULL, g_strdup(""));
+
   GString *sb = g_string_new("");
   gchar *french_date = parse_email_date_to_french(message);
 
@@ -83,17 +111,31 @@ static gchar *generate_headers_html(GMimeMessage *message) {
                  {"Réponse à", get_clean_header_value(message, "In-Reply-To")},
                  {"Références", get_clean_header_value(message, "References")}};
 
-  for (size_t i = 0; i < 8; i++) {
-    if (headers[i].value && strlen(headers[i].value) > 0 &&
-        g_ascii_strcasecmp(headers[i].value, "none") != 0) {
-      gchar *safe_val = html_escape(headers[i].value);
-      if (sb->len > 0)
-        g_string_append(sb, "<br>\n");
-      g_string_append_printf(sb, "<strong>%s :</strong> %s", headers[i].label,
-                             safe_val);
-      g_free(safe_val);
+  for (size_t i = 0; i < G_N_ELEMENTS(headers); i++) {
+    // 1. On vérifie que la valeur existe et n'est pas vide
+    if (headers[i].value && strlen(headers[i].value) > 0) {
+
+      // 2. On nettoie les espaces pour le test du "none"
+      gchar *trimmed_val = g_strdup(headers[i].value);
+      g_strstrip(trimmed_val);
+
+      if (g_ascii_strcasecmp(trimmed_val, "none") != 0) {
+        // 3. PROTECTION ABSOLUE : On applique html_escape ICI
+        // Qu'il s'agisse d'un nom, d'un mail, ou d'une date falsifiée, tout est
+        // neutralisé.
+        gchar *safe_val = html_escape(headers[i].value);
+
+        if (sb->len > 0)
+          g_string_append(sb, "<br>\n");
+
+        g_string_append_printf(sb, "<strong>%s :</strong> %s", headers[i].label,
+                               safe_val);
+
+        g_free(safe_val);
+      }
+      g_free(trimmed_val);
     }
-    g_free(headers[i].value);
+    g_free(headers[i].value); // Nettoyage de la mémoire
   }
   return g_string_free(sb, FALSE);
 }
@@ -101,6 +143,10 @@ static gchar *generate_headers_html(GMimeMessage *message) {
 // Traitement récursif de chaque composant du mail (MIME part)
 static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
                               GMimeObject *part, gpointer user_data) {
+  // 1. Sécurité : Vérification des pointeurs de base
+  g_return_if_fail(part != NULL);
+  g_return_if_fail(user_data != NULL);
+
   ParserContext *ctx = (ParserContext *)user_data;
 
   if (!GMIME_IS_PART(part))
@@ -111,7 +157,7 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
   const char *disposition = g_mime_object_get_disposition(part);
   const char *filename = g_mime_part_get_filename(mime_part);
 
-  // 1. Extraction textuelle brute ou HTML (Si pas marqué explicitement comme
+  // 2. Extraction textuelle brute ou HTML (Si pas marqué explicitement comme
   // pièce jointe)
   if (filename == NULL &&
       (!disposition || g_ascii_strcasecmp(disposition, "attachment") != 0)) {
@@ -122,10 +168,19 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
       char *text = g_mime_text_part_get_text(text_part);
 
       if (text) {
-        if (g_mime_content_type_is_type(content_type, "text", "html")) {
+        // Sécurité : On s'assure que content_type n'est pas NULL
+        if (content_type &&
+            g_mime_content_type_is_type(content_type, "text", "html")) {
+          // /!\ ATTENTION : 'text' contient du HTML brut provenant du mail
+          // (Risque XSS si non sanitisé en amont)
           g_string_append(ctx->html_content, text);
-        } else if (g_mime_content_type_is_type(content_type, "text", "plain")) {
-          g_string_append(ctx->text_content, text);
+        } else if (content_type &&
+                   g_mime_content_type_is_type(content_type, "text", "plain")) {
+          // Pour le texte brut, on l'échappe en HTML avant de l'ajouter au
+          // contenu HTML global
+          gchar *safe_text = html_escape(text);
+          g_string_append(ctx->text_content, safe_text);
+          g_free(safe_text);
         }
         g_free(text);
       }
@@ -160,10 +215,17 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
       g_free(cid_clean);
       g_regex_unref(regex);
     } else {
-      // Construction de la liste HTML des pièces jointes standard
+      // PROTECTION XSS : On échappe le nom du fichier et son chemin relatif
+      gchar *safe_filename = html_escape(filename);
+      gchar *safe_relative_path = html_escape(relative_filepath);
+
+      // Construction sécurisée de la liste HTML des pièces jointes
       g_string_append_printf(ctx->attachments_html,
                              "<li><a href=\"%s\" download>%s</a></li>\n",
-                             relative_filepath, filename);
+                             safe_relative_path, safe_filename);
+
+      g_free(safe_filename);
+      g_free(safe_relative_path);
     }
     g_free(filepath);
     g_free(relative_filepath);
@@ -173,26 +235,59 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
 // Remplacement des balises src="cid:..." par le chemin local du fichier extrait
 static void replace_cid_references(GString *html, const gchar *cid,
                                    const gchar *local_path) {
-  gchar *pattern = g_strdup_printf("src=[\"']cid:%s[\"']", cid);
+
+  // 1. Sécurité : Vérification stricte des pointeurs d'entrée
+  g_return_if_fail(html != NULL);
+  g_return_if_fail(html->str != NULL);
+  g_return_if_fail(cid != NULL);
+  g_return_if_fail(local_path != NULL);
+
+  // 2. Sécurité : On échappe le CID au cas où il contiendrait des caractères
+  // spéciaux de Regex (ex: '.', '+')
+  gchar *escaped_cid = g_regex_escape_string(cid, -1);
+
+  // Amélioration de la Regex pour gérer les espaces potentiels :
+  // src=\s*["']cid:...["']
+  gchar *pattern = g_strdup_printf("src\\s*=\\s*[\"']cid:%s[\"']", escaped_cid);
   gchar *replacement = g_strdup_printf("src=\"%s\"", local_path);
 
+  // 3. Sécurité : On vérifie si la compilation de la Regex réussit
   GRegex *regex = g_regex_new(pattern, G_REGEX_CASELESS, 0, NULL);
-  gchar *result = g_regex_replace_literal(regex, html->str, html->len, 0,
-                                          replacement, 0, NULL);
+  if (regex) {
+    gchar *result = g_regex_replace_literal(regex, html->str, html->len, 0,
+                                            replacement, 0, NULL);
+    if (result) {
+      g_string_assign(html, result);
+      g_free(result);
+    }
+    g_regex_unref(regex);
+  }
 
-  g_string_assign(html, result);
-
-  g_free(result);
-  g_regex_unref(regex);
+  // Nettoyage de la mémoire
   g_free(pattern);
   g_free(replacement);
+  g_free(escaped_cid);
 }
 
 // Traitement minimal de substitution au format Markdown vers HTML (text/plain
 // de secours)
 static gchar *convert_text_to_html_fallback(const gchar *text) {
+  // 1. Vérification de sécurité du pointeur
+  g_return_val_if_fail(text != NULL, NULL);
+
+  // 2. Optionnel : Gestion rapide si la chaîne est vide
+  if (*text == '\0') {
+    return g_strdup("<p></p>");
+  }
+
   GString *sb = g_string_new("");
   gchar *escaped = html_escape(text);
+
+  // Sécurité additionnelle : vérifier si html_escape n'a pas échoué
+  if (escaped == NULL) {
+    g_string_free(sb, TRUE);
+    return NULL;
+  }
 
   gchar **lines = g_strsplit(escaped, "\n", -1);
   g_string_append(sb, "<p>");
@@ -216,8 +311,68 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
                  const char *output_dir) {
   prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
 
-  // Détermination des dossiers
+  // --- Vérifications des paramètres ---
+  // 1. Vérification de eml_path
+  if (!eml_path || !*eml_path) {
+    g_printerr("Erreur : eml_path est NULL ou vide.\n");
+    return;
+  }
+
+  if (g_file_test(eml_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR) ==
+      FALSE) {
+    g_printerr("Erreur : Le fichier %s n'existe pas ou n'est pas un fichier "
+               "régulier.\n",
+               eml_path);
+    return;
+  }
+
+  if (access(eml_path, R_OK) != 0) {
+    g_printerr("Erreur : Le fichier %s n'est pas lisible.\n", eml_path);
+    return;
+  }
+
+  // 2. Vérification de output_html_path
+  if (!output_html_path || !*output_html_path) {
+    g_printerr("Erreur : output_html_path est NULL ou vide.\n");
+    return;
+  }
+
+  // Récupération du répertoire parent de output_html_path
   gchar *html_parent_dir = g_path_get_dirname(output_html_path);
+  if (!html_parent_dir || !*html_parent_dir) {
+    g_printerr(
+        "Erreur : Impossible de déterminer le répertoire parent de %s.\n",
+        output_html_path);
+    g_free(html_parent_dir);
+    return;
+  }
+
+  // Vérification que le répertoire parent existe et est accessible en écriture
+  if (g_file_test(html_parent_dir, G_FILE_TEST_IS_DIR) == FALSE) {
+    g_printerr("Erreur : Le répertoire parent %s n'existe pas ou n'est pas un "
+               "dossier.\n",
+               html_parent_dir);
+    g_free(html_parent_dir);
+    return;
+  }
+
+  if (access(html_parent_dir, W_OK) != 0) {
+    g_printerr(
+        "Erreur : Le répertoire parent %s n'est pas accessible en écriture.\n",
+        html_parent_dir);
+    g_free(html_parent_dir);
+    return;
+  }
+
+  // 3. Vérification de output_dir (si non-NULL)
+  if (output_dir && !*output_dir) {
+    g_printerr("Erreur : output_dir est une chaîne vide.\n");
+    g_free(html_parent_dir);
+    return;
+  }
+  // --- Fin des vérifications ---
+
+  // Détermination des dossiers
   const char *folder_name =
       output_dir ? g_path_get_basename(output_dir) : "eml_assets";
   gchar *final_assets_dir =
@@ -312,7 +467,7 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
     g_printerr("Erreur d'écriture : %s\n", error->message);
     g_error_free(error);
   } else {
-    g_print("Conversion réussie ! Fichier généré : %s\n", output_html_path);
+    g_print("Conversion successful! File generated: %s\n", output_html_path);
   }
 
   // Libération globale de la mémoire
@@ -332,13 +487,17 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
 }
 
 int main(int argc, char *argv[]) {
+  // Forcer la locale à UTF-8
+  setlocale(LC_ALL, "fr_FR.UTF-8");
+  g_setenv("LANG", "fr_FR.UTF-8", TRUE);
+  g_setenv("LC_ALL", "fr_FR.UTF-8", TRUE);
   g_mime_init();
 
   if (argc < 3) {
     g_print("Convertit un fichier d'e-mail (.eml) en page HTML.\n");
     g_print("Usage : %s <eml_path> <output_html> [<assets_dir>]\n", argv[0]);
     g_mime_shutdown();
-    return 0;
+    return 1;
   }
 
   const char *eml_path = argv[1];
@@ -351,6 +510,42 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  if (access(eml_path, R_OK) != 0) {
+    g_printerr("Erreur : Le fichier '%s' n'est pas lisible.\n", eml_path);
+    g_mime_shutdown();
+    return 1;
+  }
+
+  // Vérification du répertoire parent de output_html
+  gchar *output_dir = g_path_get_dirname(output_html);
+  if (!output_dir) {
+    g_printerr(
+        "Erreur : Impossible de déterminer le répertoire parent de '%s'.\n",
+        output_html);
+    g_mime_shutdown();
+    return 1;
+  }
+
+  if (!g_file_test(output_dir, G_FILE_TEST_IS_DIR)) {
+    g_printerr("Erreur : Le répertoire parent '%s' n'existe pas ou n'est pas "
+               "un dossier.\n",
+               output_dir);
+    g_free(output_dir);
+    g_mime_shutdown();
+    return 1;
+  }
+
+  if (access(output_dir, W_OK) != 0) {
+    g_printerr("Erreur : Le répertoire parent '%s' n'est pas accessible en "
+               "écriture.\n",
+               output_dir);
+    g_free(output_dir);
+    g_mime_shutdown();
+    return 1;
+  }
+  g_free(output_dir);
+
+  // Appel de la fonction de conversion
   eml_to_html(eml_path, output_html, assets_dir);
 
   g_mime_shutdown();
