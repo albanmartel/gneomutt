@@ -94,7 +94,7 @@ typedef struct {
   GtkWidget *terminal;
   GtkWidget *search_entry;
   GtkWidget *search_combo;
-  GtkWidget *date_combo;
+  GtkWidget *date_entry;
   GtkWidget *folder_buttons[NB_FOLDERS];
   GtkWidget *main_stack;
   GtkWidget *web_view;
@@ -151,6 +151,7 @@ struct {
     GCallback cb;
   } special[] = {{"btn_help", G_CALLBACK(on_help_clicked)},
                  {"btn_stop", G_CALLBACK(on_stop_clicked)},
+                 {"btn_pwoff", G_CALLBACK(on_stop_clicked)},
                  {"btn_sync", G_CALLBACK(on_refresh_clicked)}};
 */
 
@@ -318,7 +319,8 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   }
 
   /*--- CAS 1 si entrée clavier dans la barre de recherche ---*/
-  if (gtk_widget_has_focus(ctx->search_entry)) {
+  if (gtk_widget_has_focus(ctx->search_entry) ||
+      (ctx->search_entry && gtk_widget_has_focus(ctx->date_entry))) {
     return FALSE;
   }
 
@@ -426,28 +428,35 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
   // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
+  // 3. Récupérer les valeurs des champs de
   const char *text = gtk_entry_get_text(GTK_ENTRY(ctx->search_entry));
   const char *option =
       gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->search_combo));
-  const char *date_id =
-      gtk_combo_box_get_active_id(GTK_COMBO_BOX(ctx->date_combo));
+  const char *date_txt = gtk_entry_get_text(GTK_ENTRY(ctx->date_entry));
 
   // Si tout est vide, on ne fait rien
-  if ((!text || strlen(text) == 0) && (g_strcmp0(date_id, "any") == 0))
+  if ((!text || strlen(text) == 0) && (!date_txt || strlen(date_txt) == 0))
     return;
 
   // 1. Lancement de Notmuch
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal),
                           "\007:exec vfolder-from-query\n", -1);
 
+  // Variable pour savoir si on a écrit une date
+  gboolean a_ecrit_date = FALSE;
+
   // 2. Construction de la requête Notmuch complexe
-  if (date_id && g_strcmp0(date_id, "any") != 0) {
-    if (g_strcmp0(date_id, "today") == 0)
-      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:today ", -1);
-    else if (g_strcmp0(date_id, "week") == 0)
-      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:7d.. ", -1);
-    else if (g_strcmp0(date_id, "month") == 0)
-      vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "date:1m.. ", -1);
+  if (date_txt && g_strcmp0(date_txt, "") != 0) {
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "date:%s", date_txt);
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), buffer, -1);
+    a_ecrit_date = TRUE;
+  }
+
+  // Si on a mis une date ET qu'on a aussi du texte à chercher, on insère
+  // l'espace de séparation indispensable
+  if (a_ecrit_date && text && strlen(text) > 0) {
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), " ", -1);
   }
 
   // 3. Préfixe de champ (from: ou subject:)
@@ -455,10 +464,14 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
     vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "from:", -1);
   } else if (g_strcmp0(option, "sub") == 0) {
     vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "subject:", -1);
+  } else if (g_strcmp0(option, "body") == 0) {
+    vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "body:", -1);
   }
 
   // 4. Texte et validation finale
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), text, -1);
+
+  // Validation finale
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), "\n", -1);
 
   // Reset UI
@@ -818,8 +831,8 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
       GTK_WIDGET(gtk_builder_get_object(builder, "main_search_entry"));
   ctx->search_combo =
       GTK_WIDGET(gtk_builder_get_object(builder, "search_options_combo"));
-  ctx->date_combo =
-      GTK_WIDGET(gtk_builder_get_object(builder, "date_search_combo"));
+  ctx->date_entry =
+      GTK_WIDGET(gtk_builder_get_object(builder, "main_date_entry"));
 
   GtkWidget *btn_search =
       GTK_WIDGET(gtk_builder_get_object(builder, "btn_execute_search"));
@@ -827,6 +840,8 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     g_signal_connect(btn_search, "clicked", G_CALLBACK(on_search_clicked), ctx);
     g_signal_connect(ctx->search_entry, "activate",
                      G_CALLBACK(on_search_clicked), ctx);
+    g_signal_connect(ctx->date_entry, "activate", G_CALLBACK(on_search_clicked),
+                     ctx);
   }
 
   /* 7. Gestion des Dossiers (Sidebar) */
@@ -860,6 +875,7 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     GCallback cb;
   } special[] = {{"btn_help", G_CALLBACK(on_help_clicked)},
                  {"btn_stop", G_CALLBACK(on_stop_clicked)},
+                 {"btn_pwoff", G_CALLBACK(on_stop_clicked)},
                  {"btn_sync", G_CALLBACK(on_refresh_clicked)}};
   for (size_t i = 0; i < G_N_ELEMENTS(special); i++) {
     GtkWidget *btn = GTK_WIDGET(gtk_builder_get_object(builder, special[i].id));
