@@ -96,16 +96,12 @@ typedef struct {
   GtkWidget *search_combo;
   GtkWidget *date_combo;
   GtkWidget *folder_buttons[NB_FOLDERS];
-  GtkStack *main_stack;
+  GtkWidget *main_stack;
   GtkWidget *web_view;
   WebKitSettings *web_settings;
   GtkWidget *context_menu;
   gboolean html_generation_in_progress;
   GFileMonitor *file_monitor;
-  gulong terminal_child_exited_signal_id;
-  GPid terminal_pid;
-  GFile *src_file;
-  GFile *dest_file;
 } AppContext;
 
 /* --- CONFIGURATION DES TOUCHES (Arrow Keys Mapping) --- */
@@ -125,13 +121,15 @@ static const KeyMapping arrow_map[] = {
 struct {
   const char *id;
   const char *key;
-} shortcuts[] = {
-    {"btn_return", KEY_RETURN},       {"btn_prev", KEY_PREV},
-    {"btn_next", KEY_NEXT},           {"btn_enter", "\n"},
-    {"btn_write", KEY_WRITE},         {"btn_reply", KEY_REPLY},
-    {"btn_reply_all", KEY_REPLY_ALL}, {"btn_del", KEY_DEL},
-    {"btn_view", KEY_VIEW},
-};
+} shortcuts[] = {{"btn_return", KEY_RETURN},
+                 {"btn_prev", KEY_PREV},
+                 {"btn_next", KEY_NEXT},
+                 {"btn_enter", "\n"},
+                 {"btn_write", KEY_WRITE},
+                 {"btn_reply", KEY_REPLY},
+                 {"btn_reply_all", KEY_REPLY_ALL},
+                 {"btn_del", KEY_DEL},
+                 {"btn_view", KEY_VIEW}};
 ;
 
 /* Définition des boutons de boîtes (colonne de gauche) */
@@ -184,47 +182,8 @@ void update_active_folder_ui(GtkWidget *active_button, AppContext *ctx) {
 
 /* --- CALLBACKS --- */
 // Fonction utilitaire centralisée
-
-static void on_conversion_finished(GPid pid, gint status, gpointer user_data) {
-  AppContext *ctx = (AppContext *)user_data;
-
-  g_spawn_close_pid(pid);
-  ctx->terminal_pid = 0;
-  ctx->html_generation_in_progress = FALSE;
-
-  // Grâce au weak pointer, si le stack a été détruit, ctx->main_stack VAUT
-  // NULL. Pas de macro GTK_IS_STACK ici sur un pointeur potentiellement détruit
-  // !
-  if (ctx->main_stack == NULL) {
-    DEBUG_LOG("L'interface graphique a été détruite pendant la conversion. "
-              "Sortie propre.");
-    return;
-  }
-
-  // Si on arrive ici, le stack EXISTE, donc ses enfants (web_view) aussi.
-  if (status == 0) {
-    DEBUG_LOG("Conversion réussie en arrière-plan ! Chargement de l'UI...");
-
-    gchar *uri = g_filename_to_uri(LOCAL_HTML, NULL, NULL);
-    if (uri) {
-      webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), uri);
-      g_free(uri);
-    }
-
-    gtk_stack_set_visible_child_name(ctx->main_stack, "html_page");
-  } else {
-    g_warning("La conversion asynchrone a échoué (Code de sortie : %d).",
-              status);
-  }
-}
-
 void perform_html_conversion(AppContext *ctx) {
-  if (ctx->html_generation_in_progress) {
-    DEBUG_LOG("Conversion déjà en cours, on patiente.");
-    return;
-  }
-
-  DEBUG_LOG("Lancement asynchrone de la conversion...");
+  DEBUG_LOG("Tentative de conversion de %s vers %s", LOCAL_EML, LOCAL_HTML);
 
   if (!g_file_test(LOCAL_EML, G_FILE_TEST_EXISTS)) {
     g_warning("Fichier source introuvable : %s", LOCAL_EML);
@@ -235,78 +194,62 @@ void perform_html_conversion(AppContext *ctx) {
   g_mkdir_with_parents(dir, 0700);
   g_free(dir);
 
-  // Préparation des arguments pour g_spawn_async
-  gchar *argv_cmd[] = {CMD_EMLTOMAIL, LOCAL_EML, LOCAL_HTML, NULL};
+  // UTILISEZ LE CHEMIN COMPLET SI NÉCESSAIRE (ex: /usr/local/bin/eml-to-html)
+  gchar *cmd =
+      g_strdup_printf("%s \"%s\" \"%s\"", CMD_EMLTOMAIL, LOCAL_EML, LOCAL_HTML);
+
+  gint exit_status;
   GError *error = NULL;
 
-  // Lancement asynchrone du processus
-  if (g_spawn_async(NULL, argv_cmd, NULL,
-                    G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL,
-                    &(ctx->terminal_pid), &error)) {
-
-    ctx->html_generation_in_progress = TRUE;
-
-    // On surveille la fin du processus de manière non-bloquante
-    g_child_watch_add(ctx->terminal_pid, on_conversion_finished, ctx);
-
-    DEBUG_LOG("Processus lancé avec le PID %d. L'interface GTK reste fluide !",
-              ctx->terminal_pid);
-
-    // Optionnel : Vous pouvez afficher un spinner de chargement ici dans votre
-    // stack gtk_stack_set_visible_child_name(ctx->main_stack, "loading_page");
-
+  if (g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error)) {
+    if (exit_status == 0) {
+      DEBUG_LOG("Conversion réussie.");
+      gchar *uri = g_filename_to_uri(LOCAL_HTML, NULL, NULL);
+      webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->web_view), uri);
+      gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "html_page");
+      g_free(uri);
+    } else {
+      g_warning("La commande a échoué avec le code : %d", exit_status);
+    }
   } else {
-    g_warning("Échec du lancement asynchrone : %s", error->message);
+    g_warning("Échec total d'exécution : %s", error->message);
     g_error_free(error);
   }
+  g_free(cmd);
 }
 
 // Vos callbacks deviennent alors très simples
-void on_terminal_child_exited(VteTerminal *t, int s, gpointer d) {
-  // 1. Vérification de base : `d` (data) n'est pas NULL
-  if (d == NULL) {
-    g_warning("Callback on_terminal_child_exited appelé avec un pointeur de "
-              "données NULL.");
-    gtk_main_quit();
+void on_terminal_child_exited(VteTerminal *G_GNUC_UNUSED t, int G_GNUC_UNUSED s,
+                              gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_terminal_child_exited: user_data est NULL !");
     return;
   }
 
-  // 2. Cast sécurisé avec vérification du type (si AppContext est un GObject)
-  AppContext *ctx = (AppContext *)d;
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
+  AppContext *ctx = (AppContext *)user_data;
 
-  // 3. Vérification que `ctx` est valide (optionnel : utiliser une magie ou un
-  // canary)
-  if (ctx == NULL) {
-    g_warning("Contexte AppContext NULL dans on_terminal_child_exited.");
+  if (ctx && ctx->html_generation_in_progress) {
+    perform_html_conversion(ctx);
+    ctx->html_generation_in_progress = FALSE;
+  } else {
     gtk_main_quit();
-    return;
   }
-
-  // 4. Vérification que `ctx->html_generation_in_progress` est accessible
-  //    (évite les accès à une mémoire non initialisée)
-  if (!ctx->html_generation_in_progress) {
-    // 5. Vérification supplémentaire : si le terminal est toujours valide
-    if (t != NULL && GTK_IS_WIDGET(t)) {
-      g_debug("Terminal %p a terminé avec le statut %d. Quittons proprement.",
-              (gpointer)t, s);
-    } else {
-      g_warning("Terminal invalide dans on_terminal_child_exited.");
-    }
-    gtk_main_quit();
-    return;
-  }
-
-  // 6. Vérification que `perform_html_conversion` peut être appelé en toute
-  // sécurité
-  g_debug("Début de la conversion HTML pour le contexte %p.", (gpointer)ctx);
-  perform_html_conversion(ctx);
-  ctx->html_generation_in_progress = FALSE;
-  g_debug("Conversion HTML terminée pour le contexte %p.", (gpointer)ctx);
 }
 
 void on_help_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_help_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
+
   GtkWidget *dialog = gtk_dialog_new_with_buttons(
       "Aide", GTK_WINDOW(ctx->window),
       GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "_Fermer",
@@ -325,14 +268,21 @@ void on_help_clicked(GtkButton *btn, gpointer user_data) {
 
 void on_stop_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_stop_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
-  // 1. Envoyer la commande d'exécution immédiate (sans confirmation)
+  // 3. Envoyer la commande d'exécution immédiate (sans confirmation)
   // On envoie : <exit> ou simplement la touche 'x' si bindée par défaut
   // Pour être universel, on peut envoyer : :q!\n
   send_term_data(ctx->terminal, "\033:q!\n");
 
-  // 2. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la
+  // 4. Si NeoMutt ne se ferme pas (ex: bloqué), on force la fermeture de la
   // fenêtre Cela déclenchera la destruction du terminal et l'arrêt du programme
   gtk_window_close(GTK_WINDOW(ctx->window));
 }
@@ -340,6 +290,13 @@ void on_stop_clicked(GtkButton *btn, gpointer user_data) {
 gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
                       gpointer user_data) {
   (void)widget;
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_key_press: user_data est NULL !");
+    return FALSE;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   /*--- Détection de Ctrl + Shift + C (Copier) --*/
@@ -439,10 +396,16 @@ void on_folder_clicked(GtkButton *btn, gpointer macro_keys) {
 }
 
 void on_action_clicked(GtkButton *btn, gpointer user_data) {
-  // 1. On récupère le contexte (soit via user_data, soit via l'objet)
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_action_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
-  // 2. On récupère la touche stockée dans le bouton
+  // 3. On récupère la touche stockée dans le bouton
   const char *key = g_object_get_data(G_OBJECT(btn), "key-to-send");
 
   if (ctx && ctx->terminal && key) {
@@ -454,6 +417,13 @@ void on_action_clicked(GtkButton *btn, gpointer user_data) {
 
 void on_search_clicked(GtkWidget *widget, gpointer user_data) {
   (void)widget;
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_search_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   const char *text = gtk_entry_get_text(GTK_ENTRY(ctx->search_entry));
@@ -496,171 +466,63 @@ void on_search_clicked(GtkWidget *widget, gpointer user_data) {
   gtk_widget_grab_focus(ctx->terminal);
 }
 
-static void on_file_created(GFileMonitor *monitor, GFile *file,
-                            GFile *other_file, GFileMonitorEvent event_type,
-                            gpointer user_data) {
-  // 1. Déclaration de toutes les variables au début
-  g_autofree gchar *file_path = NULL;
-  g_autofree gchar *other_file_path =
-      NULL; // 👈 Réajouté pour éviter l'erreur de compilation
-  AppContext *ctx = NULL;
-
-  // 2. Vérifications de sécurité de base
-  g_return_if_fail(user_data != NULL);
-  g_return_if_fail(file != NULL);
-
-  // 3. Récupération du contexte
-  ctx = (AppContext *)user_data;
-
-  // 4. Si le moniteur reçu n'est plus valide ou n'est plus le moniteur actif,
-  // on sort
-  if (!G_IS_FILE_MONITOR(monitor) || ctx->file_monitor != monitor) {
+void on_file_created(GFileMonitor *monitor, GFile *file G_GNUC_UNUSED,
+                     GFile *other_file G_GNUC_UNUSED,
+                     GFileMonitorEvent event_type, gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_file_created: user_data est NULL !");
     return;
   }
 
-  // 5. On vérifie que l'événement concerne bien le fichier de destination
-  // attendu
-  if (ctx->dest_file != NULL) {
-    if (!g_file_equal(file, ctx->dest_file)) {
-      g_debug(
-          "Événement ignoré : modification sur un fichier tiers non attendu.");
-      return;
-    }
-  }
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
+  AppContext *ctx = (AppContext *)user_data;
 
-  // 6. Extraction des chemins textuels pour les logs et les tests
-  file_path = g_file_get_path(file);
-  if (other_file != NULL) {
-    other_file_path = g_file_get_path(other_file);
-  }
+  // On attend que l'écriture soit réellement terminée
+  if (event_type == G_FILE_MONITOR_EVENT_CREATED ||
+      event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) {
 
-  // ====================================================================
-  // 🛑 LOGIQUE STANDARD DES ÉVÉNEMENTS ASYNCHRONES
-  // ====================================================================
-
-  // Cas A : Le fichier est créé vide (le système commence tout juste à
-  // l'écrire) On logue l'info mais on s'arrête là pour attendre que l'écriture
-  // se termine.
-  if (event_type == G_FILE_MONITOR_EVENT_CREATED) {
-    g_debug("Fichier cible détecté : %s. Attente de la fin de l'écriture...",
-            file_path);
-    return;
-  }
-
-  // Cas B : Détection d'un renommage ou remplacement atomique (Utilisation de
-  // other_file)
-  if (event_type == G_FILE_MONITOR_EVENT_RENAMED && other_file_path != NULL) {
-    g_debug("Remplacement atomique détecté : %s a été déplacé vers %s",
-            other_file_path, file_path);
-  }
-
-  // Déclencheur final : L'écriture est achevée (CHANGES_DONE_HINT), le fichier
-  // a bougé (RENAMED) OU par sécurité, le fichier préexistait déjà sur le
-  // disque lors du signal (g_file_test)
-  if (event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT ||
-      event_type == G_FILE_MONITOR_EVENT_RENAMED ||
-      (file_path != NULL &&
-       g_file_test(file_path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))) {
-
-    g_debug(
-        "Le fichier %s est stable et disponible. Lancement de la conversion !",
-        file_path);
-
-    // 1. On lance enfin la conversion HTML !
+    // On lance la conversion
     perform_html_conversion(ctx);
 
-    // 2. Nettoyage complet et fermeture définitive du moniteur
-    if (G_IS_FILE_MONITOR(monitor)) {
-      g_signal_handlers_disconnect_by_data(monitor, ctx);
-      g_file_monitor_cancel(monitor);
-    }
-
-    // 3. Désallocation sécurisée de nos pointeurs globaux pour la prochaine
-    // fois
-    g_clear_object(&ctx->dest_file);
-    g_clear_object(&ctx->src_file);
-    g_clear_object(&ctx->file_monitor);
+    // On nettoie
+    g_file_monitor_cancel(monitor);
+    g_object_unref(monitor);
   }
 }
 
-void on_view_html_clicked(GtkWidget *widget, gpointer user_data) {
-  g_debug("Widget cliqué : %p", (gpointer)widget);
+void on_view_html_clicked(GtkWidget *G_GNUC_UNUSED widget, gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_view_html_clicked: user_data est NULL !");
+    return;
+  }
 
-  // 1. Vérification de base : user_data n'est pas NULL
-  g_return_if_fail(user_data != NULL);
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
-
-  // 2. Vérification que ctx->terminal est un VteTerminal valide
-  g_return_if_fail(ctx->terminal != NULL);
-  g_return_if_fail(VTE_IS_TERMINAL(ctx->terminal));
 
   // 3. Envoyer la commande au terminal
   vte_terminal_feed_child(VTE_TERMINAL(ctx->terminal), KEY_VIEW, -1);
 
-  // 4. Vérification que LOCAL_EML est un chemin valide
-  if (LOCAL_EML == NULL || *LOCAL_EML == '\0') {
-    g_warning("LOCAL_EML est NULL ou vide.");
-    return;
-  }
-
-  // ====================================================================
-  // NETTOYAGE ULTRA-SÉCURISÉ DE L'ANCIEN MONITEUR
-  // Fait place nette AVANT de créer quoi que ce soit de nouveau.
-  // ====================================================================
-  if (ctx->file_monitor != NULL) {
-    DEBUG_LOG("Annulation et nettoyage de l'ancien moniteur de fichier...");
-
-    // On demande à GIO d'arrêter d'écouter les événements sur l'ancien
-    // fichier
-    g_file_monitor_cancel(ctx->file_monitor);
-
-    // On libère proprement l'objet. Si GLib l'avait déjà détruit en interne
-    // suite à la suppression du fichier, g_clear_object gère la situation
-    // sans crasher.
-    g_clear_object(&ctx->file_monitor);
-  }
-
-  // 5. Créer le GFile pour le nouveau mail
+  // 4. Préparer la surveillance du fichier de destination
   GFile *file = g_file_new_for_path(LOCAL_EML);
-  if (file == NULL) {
-    g_warning("Impossible de créer le GFile pour le chemin : %s", LOCAL_EML);
-    return;
-  }
-
-  // 6. Créer le GFileMonitor avec gestion d'erreur
-  GError *error = NULL;
   GFileMonitor *monitor =
-      g_file_monitor_file(file, G_FILE_MONITOR_NONE, NULL, &error);
-  if (monitor == NULL) {
-    g_warning("Impossible de surveiller le fichier %s : %s", LOCAL_EML,
-              error->message);
-    g_error_free(error);
-    g_object_unref(file);
-    return;
-  }
+      g_file_monitor_file(file, G_FILE_MONITOR_NONE, NULL, NULL);
 
-  ctx->src_file = g_file_new_for_path(LOCAL_EML);
-  ctx->dest_file = g_file_new_for_path(LOCAL_HTML);
+  // 5. Connecter le signal
+  g_signal_connect(monitor, "changed", G_CALLBACK(on_file_created), ctx);
 
-  // 7. Connecter le signal de manière "intelligente" et sécurisée
-  // On donne un vrai GObject (le widget bouton ou ctx->main_stack) à GLib pour
-  // valider la fonction, et on passe G_CONNECT_SWAPPED pour que 'ctx' soit
-  // envoyé en premier au callback.
-  g_signal_connect_object(
-      monitor, "changed", G_CALLBACK(on_file_created),
-      widget, // 👈 Un vrai GObject (le bouton cliqué) pour satisfaire GLib
-      G_CONNECT_SWAPPED);
-
-  // 8. Stockage du nouveau moniteur tout frais dans notre contexte nettoyé
-  ctx->file_monitor = monitor;
-
-  // 9. Libérer le GFile local (le moniteur a pris sa propre référence
-  // interne)
   g_object_unref(file);
 }
 
 void on_refresh_viewhtml(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
-  // 1. On récupère notre structure globale AppContext
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_refresh_viewhtml: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   if (ctx && ctx->web_view) {
@@ -703,6 +565,13 @@ void vider_repertoire(const char *chemin) {
 
 void on_back_clicked(GtkWidget *widget, gpointer user_data) {
   (void)widget;
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_back_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   // Supprimer les fichiers eml et html
@@ -713,12 +582,18 @@ void on_back_clicked(GtkWidget *widget, gpointer user_data) {
   // Revenir à l'interface NeoMutt
   gtk_stack_set_visible_child_name(GTK_STACK(ctx->main_stack), "neomutt_page");
 
-  // Redonner le focus au terminal pour pouvoir continuer à utiliser le
-  // clavier
+  // Redonner le focus au terminal pour pouvoir continuer à utiliser le clavier
   gtk_widget_grab_focus(ctx->terminal);
 }
 
 void on_print_pdf_clicked(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_print_pdf_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   if (!ctx->web_view) {
@@ -731,8 +606,8 @@ void on_print_pdf_clicked(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
       webkit_print_operation_new(WEBKIT_WEB_VIEW(ctx->web_view));
 
   // 2. Lancer la boîte de dialogue d'impression standard GTK
-  // La fonction retourne un résultat (WEBKIT_PRINT_OPERATION_RESPONSE_PRINT
-  // ou CANCEL)
+  // La fonction retourne un résultat (WEBKIT_PRINT_OPERATION_RESPONSE_PRINT ou
+  // CANCEL)
   webkit_print_operation_run_dialog(print_operation, GTK_WINDOW(ctx->window));
 
   // 3. Nettoyage
@@ -740,6 +615,13 @@ void on_print_pdf_clicked(GtkButton *G_GNUC_UNUSED button, gpointer user_data) {
 }
 
 void on_toggle_images_clicked(GtkWidget *button, gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_toggle_images_clicked: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   // 1. Récupérer l'état actuel (par défaut FALSE si non défini)
@@ -764,8 +646,7 @@ void on_toggle_images_clicked(GtkWidget *button, gpointer user_data) {
   webkit_settings_set_auto_load_images(settings, new_state);
 
   // CLÉ DE VOUTE : Permettre à notre fichier HTML local (/tmp/...)
-  // d'accéder à des adresses HTTP/HTTPS distantes pour télécharger les
-  // images.
+  // d'accéder à des adresses HTTP/HTTPS distantes pour télécharger les images.
   webkit_settings_set_allow_universal_access_from_file_urls(settings,
                                                             new_state);
 
@@ -786,6 +667,13 @@ void on_toggle_images_clicked(GtkWidget *button, gpointer user_data) {
 // Fonction universelle pour COPIER le texte sélectionné du widget actif
 void on_global_copy_activated(G_GNUC_UNUSED GtkWidget *widget,
                               gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_global_copy_activated: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   GtkWidget *focus_widget = gtk_window_get_focus(GTK_WINDOW(ctx->window));
@@ -797,6 +685,13 @@ void on_global_copy_activated(G_GNUC_UNUSED GtkWidget *widget,
 // Fonction universelle pour COLLER le texte dans le widget actif
 void on_global_paste_activated(G_GNUC_UNUSED GtkWidget *widget,
                                gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_global_paste_activated: user_data est NULL !");
+    return;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   GtkWidget *focus_widget = gtk_window_get_focus(GTK_WINDOW(ctx->window));
@@ -809,6 +704,13 @@ void on_global_paste_activated(G_GNUC_UNUSED GtkWidget *widget,
 static gboolean on_window_button_press(G_GNUC_UNUSED GtkWidget *widget,
                                        GdkEventButton *event,
                                        gpointer user_data) {
+  // 1. Vérification de sécurité du pointeur
+  if (user_data == NULL) {
+    g_warning("on_window_button_press: user_data est NULL !");
+    return FALSE;
+  }
+
+  // 2. Cast sécurisé maintenant que l'on sait qu'il n'est pas NULL
   AppContext *ctx = (AppContext *)user_data;
 
   if (event->type == GDK_BUTTON_PRESS &&
@@ -819,42 +721,6 @@ static gboolean on_window_button_press(G_GNUC_UNUSED GtkWidget *widget,
   return FALSE;
 }
 
-// Définissez un callback pour gérer la fin du processus
-static void on_terminal_spawn_async_callback(VteTerminal *terminal, GPid pid,
-                                             GError *error,
-                                             gpointer user_data) {
-  // Récupération du contexte depuis user_data
-  AppContext *ctx = (AppContext *)user_data;
-
-  // Vérification de cohérence (optionnel, pour le debug)
-  g_assert(terminal == VTE_TERMINAL(ctx->terminal));
-
-  if (error != NULL) {
-    g_critical(
-        "Erreur lors du lancement de Neomutt dans le terminal (PID: %d) : %s",
-        pid, error->message);
-    g_error_free(error);
-
-    // Exemple : Désactiver le terminal ou afficher une erreur dans l'UI
-    if (ctx && ctx->terminal) {
-      // Vous pouvez par exemple désactiver le terminal ou afficher un message
-      gtk_widget_set_sensitive(ctx->terminal, FALSE);
-    }
-  } else {
-    g_message("Neomutt lancé avec succès dans le terminal (PID: %d)", pid);
-
-    // Stocker le PID dans une variable de ctx
-    ctx->terminal_pid = pid;
-
-    // Exemple : Configurer le terminal après le lancement
-    if (ctx && ctx->terminal) {
-      vte_terminal_set_scroll_on_output(terminal, TRUE);
-    }
-  }
-}
-
-// Fonction pour vider la corbeille locale
-
 /* --- INITIALISATION UI --- */
 int init_gui(AppContext *ctx, GtkBuilder *builder) {
   GError *error = NULL;
@@ -862,53 +728,21 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   /* 1. Chargement du XML depuis les ressources */
   if (!gtk_builder_add_from_resource(
           builder, "/com/monprojet/icons/interface.ui", &error)) {
-    g_critical("Erreur lors du chargement de l'interface : %s", error->message);
-    g_error_free(error);
-    return FALSE; // Utilisez FALSE pour les fonctions GLib/GTK
+    g_printerr("Erreur chargement interface : %s\n", error->message);
+    if (error)
+      g_error_free(error);
+    return 0;
   }
 
   // Supprimer les fichiers eml et html
-  // Vérifiez que les chemins sont valides
-  if (LOCAL_HTML && *LOCAL_HTML != '\0') {
-    if (remove(LOCAL_HTML) != 0 &&
-        errno != ENOENT) { // ENOENT = fichier inexistant
-      g_warning("Impossible de supprimer %s : %s", LOCAL_HTML, strerror(errno));
-    }
-  }
-  if (LOCAL_EML && *LOCAL_EML != '\0') {
-    if (remove(LOCAL_EML) != 0 && errno != ENOENT) {
-      g_warning("Impossible de supprimer %s : %s", LOCAL_EML, strerror(errno));
-    }
-  }
-  if (LOCAL_ASSETS && *LOCAL_ASSETS != '\0') {
-    vider_repertoire(LOCAL_ASSETS);
-  } else {
-    g_warning("LOCAL_ASSETS est NULL ou vide.");
-  }
+  remove(LOCAL_HTML);
+  remove(LOCAL_EML);
+  vider_repertoire(LOCAL_ASSETS);
 
   /* 2. Récupération des widgets principaux */
   ctx->window = GTK_WIDGET(gtk_builder_get_object(builder, "window"));
+  ctx->main_stack = GTK_WIDGET(gtk_builder_get_object(builder, "main_stack"));
   ctx->terminal = GTK_WIDGET(gtk_builder_get_object(builder, "terminal"));
-
-  // Récupération et vérification explicite de main_stack;
-  GtkStack *main_stack_widget =
-      GTK_STACK(gtk_builder_get_object(builder, "main_stack"));
-  if (main_stack_widget && GTK_IS_STACK(main_stack_widget)) {
-    ctx->main_stack = GTK_STACK(main_stack_widget);
-  } else {
-    g_critical("Le widget 'main_stack' n'est pas un GtkStack valide dans "
-               "interface.ui !");
-    return FALSE;
-  }
-
-  if (!ctx->window || !ctx->main_stack || !ctx->terminal) {
-    g_critical("Un ou plusieurs widgets manquants dans interface.ui");
-    return FALSE;
-  }
-
-  // Si le stack meurt, GTK mettra ctx->main_stack à NULL automatiquement.
-  g_object_add_weak_pointer(G_OBJECT(ctx->main_stack),
-                            (gpointer *)&(ctx->main_stack));
 
   /* 3. Configuration de WebKit (Injection dans le conteneur du XML) */
   GtkWidget *web_container =
@@ -919,18 +753,9 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     gtk_widget_set_valign(web_container, GTK_ALIGN_FILL);
 
     ctx->web_view = webkit_web_view_new();
-    if (!ctx->web_view) {
-      g_critical("Impossible de créer le WebKitWebView.");
-      return FALSE;
-    }
 
     // 1. Initialiser l'objet settings AVANT de l'utiliser
     ctx->web_settings = webkit_settings_new();
-    if (!ctx->web_settings) {
-      g_critical("Impossible de créer les WebKitSettings.");
-      g_object_unref(ctx->web_view);
-      return FALSE;
-    }
 
     // Initialisation des réglages
     webkit_settings_set_allow_file_access_from_file_urls(ctx->web_settings,
@@ -950,38 +775,28 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     // Appliquer les réglages
     webkit_web_view_set_settings(WEBKIT_WEB_VIEW(ctx->web_view),
                                  ctx->web_settings);
+
     // 1. On autorise la vue à s'étendre verticalement et horizontalement
     gtk_widget_set_hexpand(ctx->web_view, TRUE);
     gtk_widget_set_vexpand(ctx->web_view, TRUE);
+
     // 2. On l'ajoute au conteneur
     gtk_container_add(GTK_CONTAINER(web_container), ctx->web_view);
+
     // 3. On peut enlever le size_request ou le mettre à une valeur minimale
     // gtk_widget_set_size_request(ctx->web_view, 100, 100);
+
     gtk_widget_show_all(web_container);
   } else {
-    g_critical("'web_container' introuvable dans interface.ui");
-    return FALSE; // Quittez la fonction si le conteneur est manquant
+    g_printerr("ERREUR : 'web_container' introuvable dans interface.ui\n");
   }
 
   /* 4. Style CSS */
   GtkCssProvider *provider = gtk_css_provider_new();
-  if (!provider) {
-    g_critical("Impossible de créer le GtkCssProvider.");
-    return FALSE;
-  }
-
-  GError *css_error = NULL;
-  if (!gtk_css_provider_load_from_data(
-          provider,
-          ".folder-active { background-color: #3584e4; color: white; "
-          "border-radius: 5px; }",
-          -1, &css_error)) {
-    g_critical("Erreur lors du chargement du CSS : %s", css_error->message);
-    g_error_free(css_error);
-    g_object_unref(provider);
-    return FALSE;
-  }
-
+  gtk_css_provider_load_from_data(provider,
+                                  ".folder-active { background-color: #3584e4; "
+                                  "color: white; border-radius: 5px; }",
+                                  -1, NULL);
   gtk_style_context_add_provider_for_screen(
       gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -990,49 +805,12 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
   /* 5. Configuration et Lancement du Terminal VTE */
   if (ctx->terminal) {
     vte_terminal_set_scroll_on_output(VTE_TERMINAL(ctx->terminal), TRUE);
-
-    // Vérifiez que CMD_NEOMUTT est valide
-    if (!CMD_NEOMUTT || *CMD_NEOMUTT == '\0') {
-      g_critical("CMD_NEOMUTT est NULL ou vide.");
-      return FALSE;
-    }
-
-    vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal),
-                             VTE_PTY_DEFAULT,               // pty_flags
-                             NULL,                          // working_directory
-                             (char *[]){CMD_NEOMUTT, NULL}, // argv
-                             NULL,                          // envv
-                             G_SPAWN_SEARCH_PATH,           // spawn_flags
-                             NULL,                          // child_setup
-                             NULL,                          // child_setup_data
-                             NULL, // child_setup_data_destroy
-                             -1,   // timeout
-                             NULL, // cancellable
-                             on_terminal_spawn_async_callback, // callback
-                             ctx                               // user_data
-    );
-
-    // ====================================================================
-    // 🛑 LE CORRECTIF : FORCER LE DÉBLOCAGE DES FLUX ET DE LA BOUCLE
-    // ====================================================================
-    fflush(stdout);
-    fflush(stderr);
-
-    // On laisse le temps à GTK et GIO de traiter la création du moniteur
-    while (gtk_events_pending()) {
-      gtk_main_iteration();
-    }
-
-    // Vérifiez que le signal est bien connecté
-    gulong signal_id =
-        g_signal_connect(ctx->terminal, "child-exited",
-                         G_CALLBACK(on_terminal_child_exited), ctx);
-    if (signal_id == 0) {
-      g_critical("Impossible de connecter le signal 'child-exited'.");
-      return FALSE;
-    }
-    // Stockez signal_id dans ctx si vous voulez le déconnecter plus tard
-    ctx->terminal_child_exited_signal_id = signal_id;
+    vte_terminal_spawn_async(VTE_TERMINAL(ctx->terminal), VTE_PTY_DEFAULT, NULL,
+                             (char *[]){CMD_NEOMUTT, NULL}, NULL,
+                             G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL,
+                             NULL, NULL);
+    g_signal_connect(ctx->terminal, "child-exited",
+                     G_CALLBACK(on_terminal_child_exited), ctx);
   }
 
   /* 6. Widgets de Recherche */
@@ -1147,8 +925,8 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     g_signal_connect(btn_view, "clicked", G_CALLBACK(on_view_html_clicked),
                      ctx);
   } else {
-    g_critical("Impossible de lier le callback : le bouton 'btn_view' "
-               "n'existe pas !");
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_view' n'existe pas !");
   }
 
   GtkWidget *btn_img = GTK_WIDGET(gtk_builder_get_object(builder, "btn_img"));
@@ -1156,24 +934,24 @@ int init_gui(AppContext *ctx, GtkBuilder *builder) {
     g_signal_connect(btn_img, "clicked", G_CALLBACK(on_toggle_images_clicked),
                      ctx);
   } else {
-    g_critical("Impossible de lier le callback : le bouton 'btn_img' "
-               "n'existe pas !");
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_img' n'existe pas !");
   }
 
   GtkWidget *btn_pdf = GTK_WIDGET(gtk_builder_get_object(builder, "btn_pdf"));
   if (btn_pdf) {
     g_signal_connect(btn_pdf, "clicked", G_CALLBACK(on_print_pdf_clicked), ctx);
   } else {
-    g_critical("Impossible de lier le callback : le bouton 'btn_pdf' "
-               "n'existe pas !");
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_pdf' n'existe pas !");
   }
 
   GtkWidget *btn_back = GTK_WIDGET(gtk_builder_get_object(builder, "btn_back"));
   if (btn_back) {
     g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back_clicked), ctx);
   } else {
-    g_critical("Impossible de lier le callback : le bouton 'btn_back' "
-               "n'existe pas !");
+    g_critical(
+        "Impossible de lier le callback : le bouton 'btn_back' n'existe pas !");
   }
 
   GtkWidget *btn_refresh =
@@ -1212,19 +990,16 @@ int main(int argc, char *argv[]) {
   // 3. Initialisation du contexte
   // Il est conseillé de mettre la structure à zéro pour éviter les pointeurs
   // sauvages
-  /*AppContext ctx;
-  memset(&ctx, 0, sizeof(AppContext)); */
-
-  AppContext *ctx = g_new0(AppContext, 1);
+  AppContext ctx;
+  memset(&ctx, 0, sizeof(AppContext));
 
   // 4. Création du Builder
   GtkBuilder *builder = gtk_builder_new();
 
   // 5. Chargement de l'interface
-  if (!init_gui(ctx, builder)) {
+  if (!init_gui(&ctx, builder)) {
     g_printerr(ERR_BUILDER);
     g_object_unref(builder);
-    g_free(ctx);
     return 1;
   }
 
@@ -1235,9 +1010,6 @@ int main(int argc, char *argv[]) {
 
   // 6. Boucle principale
   gtk_main();
-
-  // Nettoyage final avant de quitter
-  g_free(ctx);
 
   return 0;
 }
