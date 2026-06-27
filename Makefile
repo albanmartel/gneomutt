@@ -22,6 +22,10 @@ LIBS += $(shell pkg-config --libs $(PKGS))
 TOOL_CFLAGS = -Wall -Wextra -O3 $(shell pkg-config --cflags $(GMIME_PKG))
 TOOL_LIBS = $(shell pkg-config --libs $(GMIME_PKG))
 
+# Drapeaux pour l'outil eml_to_html (GMime + Gumbo)
+HTML_CFLAGS = -Wall -Wextra -O3 $(shell pkg-config --cflags $(GMIME_PKG))
+HTML_LIBS = $(shell pkg-config --libs $(GMIME_PKG)) -lgumbo
+
 # 2. Récupération des drapeaux via pkg-config
 PREFIX = /usr/local
 BINDIR = $(PREFIX)/bin
@@ -57,14 +61,13 @@ $(RES_SRC): $(RES_XML) $(DATADIR)/interface.ui $(DATADIR)/icons/scalable/gneomut
 $(TARGET): $(SRC) $(RES_SRC)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
 
-# Règle de compilation spécifique pour eml_to_html
-eml_to_html: src/eml_to_html.c
-	$(CC) $(TOOL_CFLAGS) src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
-
-# Règle de compilation spécifique pour eml_to_txt
+# Règle de compilation spécifique pour eml_to_txt (Inchangée)
 eml_to_txt: src/eml_to_txt.c
 	$(CC) $(TOOL_CFLAGS) src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
 
+# Règle de compilation spécifique pour eml_to_html
+eml_to_html: src/eml_to_html.c
+	$(CC) $(HTML_CFLAGS) src/eml_to_html.c -o eml_to_html $(HTML_LIBS)
 
 # Vérifie si tous les outils nécessaires sont installés
 check-deps:
@@ -80,7 +83,8 @@ debug: clean
 	$(MAKE) $(RES_SRC)
 	# 2. On compile le programme principal et les outils avec les flags de debug
 	$(CC) $(CFLAGS) -g -O0 $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
-	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_html.c -o eml_to_html $(TOOL_LIBS)
+	# MODIFIÉ : On ajoute -lgumbo pour eml_to_html (en utilisant HTML_LIBS ou en l'écrivant en dur)
+	$(CC) $(HTML_CFLAGS) -g -O0 src/eml_to_html.c -o eml_to_html $(HTML_LIBS)
 	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
 	@echo "======================================================="
 	@echo "       Mode Debug activé avec succès (-g -O0)          "
