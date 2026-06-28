@@ -593,6 +593,51 @@
                     <property name="position">5</property>
                   </packing>
                 </child>
+                <child>
+                  <object class="GtkButton" id="btn_reply_w">
+                    <property name="label">↪️Répondre</property>
+                    <property name="name">reply</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Répondre</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">6</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_reply_all_w">
+                    <property name="label">👨‍👩‍👧‍👦Répondre à tous</property>
+                    <property name="name">groupe</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Répondre à tous</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">7</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_write_w">
+                    <property name="label">✍️Écrire</property>
+                    <property name="name">write</property>
+                    <property name="visible">True</property>
+                    <property name="can-focus">True</property>
+                    <property name="receives-default">False</property>
+                    <property name="tooltip-text">Écrire</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                    <property name="position">8</property>
+                  </packing>
+                </child>
               </object>
               <packing>
                 <property name="expand">False</property>

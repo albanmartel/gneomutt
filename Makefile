@@ -1,5 +1,5 @@
 TARGET = gneomutt
-TOOLS = eml_to_html eml_to_txt
+TOOLS = eml_to_html eml_to_txt eml_to_std
 CC = clang
 # On passe en -O3 pour une optimisation maximale
 CFLAGS = -Wall -Wextra -O3
@@ -20,7 +20,7 @@ LIBS += $(shell pkg-config --libs $(PKGS))
 
 # Drapeaux spécifiques et légers pour les deux outils GMime
 TOOL_CFLAGS = -Wall -Wextra -O3 $(shell pkg-config --cflags $(GMIME_PKG))
-TOOL_LIBS = $(shell pkg-config --libs $(GMIME_PKG))
+TOOL_LIBS   = $(shell pkg-config --libs $(GMIME_PKG)) -lgumbo
 
 # Drapeaux pour l'outil eml_to_html (GMime + Gumbo)
 HTML_CFLAGS = -Wall -Wextra -O3 $(shell pkg-config --cflags $(GMIME_PKG))
@@ -61,6 +61,10 @@ $(RES_SRC): $(RES_XML) $(DATADIR)/interface.ui $(DATADIR)/icons/scalable/gneomut
 $(TARGET): $(SRC) $(RES_SRC)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
 
+# Règle de compilation spécifique pour eml_to_std (Inchangée)
+eml_to_std: src/eml_to_std.c
+	$(CC) $(TOOL_CFLAGS) src/eml_to_std.c -o eml_to_std $(TOOL_LIBS)
+
 # Règle de compilation spécifique pour eml_to_txt (Inchangée)
 eml_to_txt: src/eml_to_txt.c
 	$(CC) $(TOOL_CFLAGS) src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
@@ -85,6 +89,7 @@ debug: clean
 	$(CC) $(CFLAGS) -g -O0 $(GTK_CFLAGS) $(SRC) $(RES_SRC) -o $(TARGET) $(LDFLAGS)
 	# MODIFIÉ : On ajoute -lgumbo pour eml_to_html (en utilisant HTML_LIBS ou en l'écrivant en dur)
 	$(CC) $(HTML_CFLAGS) -g -O0 src/eml_to_html.c -o eml_to_html $(HTML_LIBS)
+	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_std.c -o eml_to_std $(TOOL_LIBS)
 	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
 	@echo "======================================================="
 	@echo "       Mode Debug activé avec succès (-g -O0)          "
@@ -120,6 +125,7 @@ install: all
 	sudo install -Dm755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 	sudo install -Dm755 eml_to_html $(DESTDIR)$(BINDIR)/eml_to_html
 	sudo install -Dm755 eml_to_txt $(DESTDIR)$(BINDIR)/eml_to_txt
+	sudo install -Dm755 eml_to_std $(DESTDIR)$(BINDIR)/eml_to_std
 	
 # 2. Installation du raccourci de bureau
 	sudo install -Dm644 $(DATADIR)/gneomutt.desktop $(DESTDIR)$(APPDIR)/$(TARGET).desktop
@@ -142,6 +148,7 @@ uninstall:
 	sudo rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_html
 	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_txt
+	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_std
 	sudo rm -f $(DESTDIR)$(APPDIR)/$(TARGET).desktop
 	
 # Supprime l'icône SVG

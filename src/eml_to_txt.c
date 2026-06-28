@@ -1,44 +1,407 @@
-#include <gio/gio.h> // Requis pour g_input_stream et g_output_stream
-#include <glib.h>
+#include <ctype.h>
 #include <gmime/gmime.h>
+#include <gumbo.h>
+#include <libgen.h>
+#include <locale.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
-#include <sys/wait.h> // Requis pour waitpid
-#include <unistd.h>   // Requis pour close()
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define PROGRAMME_NAME "eml_to_txt"
 
-// Structure de contexte passée à GMime pour accumuler les textes (bruts et
-// HTML) lors du scan des sections du mail
+// ============================================================================
+// ENGINE DE L'ARENA MEMOIRE
+// ============================================================================
 typedef struct {
-  GString *text_content;
-  GString *html_content;
-} TextParserContext;
+  char *buffer;
+  size_t capacity;
+  size_t offset;
+} Arena;
 
-// Extraction et décodage propre des en-têtes textuels (Sujet, From, etc.)
-static gchar *get_clean_header_value(GMimeMessage *message,
-                                     const char *header_name) {
-  const char *value =
-      g_mime_object_get_header(GMIME_OBJECT(message), header_name);
-  if (!value)
-    return g_strdup("");
+Arena *arena_create(size_t capacity) {
+  Arena *arena = malloc(sizeof(Arena));
+  if (!arena) {
+    fprintf(stderr,
+            "Erreur critique : Échec de l'allocation de la structure Arena\n");
+    exit(EXIT_FAILURE);
+  }
 
-  // Décodage des fragments encodés selon la RFC 2047 (Ex: =?utf-8?Q?...)
-  gchar *decoded = g_mime_utils_header_decode_text(NULL, value);
-  if (!decoded)
-    return g_strdup(value);
+  arena->buffer = malloc(capacity);
+  if (!arena->buffer) {
+    fprintf(stderr,
+            "Erreur critique : Échec de l'allocation du buffer de l'Arena (%zu "
+            "octets)\n",
+            capacity);
+    free(arena);
+    exit(EXIT_FAILURE);
+  }
 
-  return g_strdup(g_strstrip(decoded));
+  arena->capacity = capacity;
+  arena->offset = 0;
+  return arena;
 }
 
-// Traduction de la date du courriel en français, indépendamment des locales du
-// système hôte
-static gchar *parse_email_date_to_french(GMimeMessage *message) {
+void *arena_alloc(Arena *arena, size_t size) {
+  if (!arena || !arena->buffer) {
+    fprintf(stderr,
+            "Erreur : Tentative d'allocation sur une Arena invalide ou NULL\n");
+    return NULL;
+  }
+
+  size_t aligned_size = (size + 7) & ~7;
+  if (arena->offset + aligned_size > arena->capacity) {
+    fprintf(stderr, "Erreur critique : Arena saturée !\n");
+    exit(EXIT_FAILURE);
+  }
+  void *ptr = &arena->buffer[arena->offset];
+  arena->offset += aligned_size;
+  return ptr;
+}
+
+char *arena_strdup(Arena *arena, const char *src) {
+  if (!arena || !src)
+    return NULL;
+
+  size_t len = strlen(src);
+  char *dst = arena_alloc(arena, len + 1);
+  if (dst)
+    memcpy(dst, src, len + 1);
+  return dst;
+}
+
+char *arena_asprintf(Arena *arena, const char *format, ...) {
+  if (!arena || !format)
+    return NULL;
+
+  va_list args;
+  va_start(args, format);
+  size_t needed = vsnprintf(NULL, 0, format, args) + 1;
+  va_end(args);
+
+  char *dst = arena_alloc(arena, needed);
+  if (dst) {
+    va_start(args, format);
+    vsnprintf(dst, needed, format, args);
+    va_end(args);
+  }
+  return dst;
+}
+
+void arena_string_append(Arena *arena, char **dest, size_t *current_len,
+                         const char *src) {
+  if (!arena || !dest || !current_len || !src)
+    return;
+
+  size_t src_len = strlen(src);
+  char *new_buf = arena_alloc(arena, *current_len + src_len + 1);
+  if (!new_buf)
+    return;
+
+  if (*current_len > 0 && *dest) {
+    memcpy(new_buf, *dest, *current_len);
+  }
+  memcpy(new_buf + *current_len, src, src_len + 1);
+  *dest = new_buf;
+  *current_len += src_len;
+}
+
+void arena_string_append_printf(Arena *arena, char **dest, size_t *current_len,
+                                const char *format, ...) {
+  if (!arena || !dest || !current_len || !format)
+    return;
+
+  va_list args;
+  va_start(args, format);
+  size_t needed = vsnprintf(NULL, 0, format, args) + 1;
+  va_end(args);
+
+  char *formatted = arena_alloc(arena, needed);
+  if (!formatted)
+    return;
+
+  va_start(args, format);
+  vsnprintf(formatted, needed, format, args);
+  va_end(args);
+
+  arena_string_append(arena, dest, current_len, formatted);
+}
+
+void arena_destroy(Arena *arena) {
+  if (!arena)
+    return;
+  if (arena->buffer) {
+    free(arena->buffer);
+  }
+  free(arena);
+}
+
+// ============================================================================
+// STRUCTURES ET LOGIQUE DE NETTOYAGE DES ESPACES UNICODE
+// ============================================================================
+typedef struct {
+  unsigned char bytes[3];
+  int length;
+} EspaceUnicode;
+
+static const EspaceUnicode espaces_table[] = {
+    {{0xC2, 0xA0, 0x00}, 2}, // U+00A0 (NBSP)
+    {{0xE1, 0x9A, 0x80}, 3}, // U+1680
+    {{0xE2, 0x80, 0x80}, 3}, // U+2000 à U+200A
+    {{0xE2, 0x80, 0x81}, 3}, {{0xE2, 0x80, 0x82}, 3}, {{0xE2, 0x80, 0x83}, 3},
+    {{0xE2, 0x80, 0x84}, 3}, {{0xE2, 0x80, 0x85}, 3}, {{0xE2, 0x80, 0x86}, 3},
+    {{0xE2, 0x80, 0x87}, 3}, // U+2007 (Figure Space)
+    {{0xE2, 0x80, 0x88}, 3}, {{0xE2, 0x80, 0x89}, 3}, {{0xE2, 0x80, 0x8A}, 3},
+    {{0xE2, 0x80, 0xAF}, 3}, // U+202F (Narrow NBSP)
+    {{0xE2, 0x81, 0x9F}, 3}, // U+205F
+    {{0xE3, 0x80, 0x80}, 3}  // U+3000
+};
+
+#define NB_ESPACES (sizeof(espaces_table) / sizeof(EspaceUnicode))
+
+static int get_match_length(const unsigned char *ptr, size_t remaining) {
+  if (!ptr || remaining == 0)
+    return 0;
+  for (size_t i = 0; i < NB_ESPACES; i++) {
+    if (remaining >= (size_t)espaces_table[i].length) {
+      int match = 1;
+      for (int j = 0; j < espaces_table[i].length; j++) {
+        if (ptr[j] != espaces_table[i].bytes[j]) {
+          match = 0;
+          break;
+        }
+      }
+      if (match)
+        return espaces_table[i].length;
+    }
+  }
+  return 0;
+}
+
+static char *nettoyer_espaces_texte(Arena *arena, const char *src) {
+  if (!arena || !src)
+    return NULL;
+
+  size_t src_len = strlen(src);
+  char *dst = arena_alloc(arena, src_len + 1);
+  if (!dst)
+    return NULL;
+
+  char *dst_ptr = dst;
+  const unsigned char *src_ptr = (const unsigned char *)src;
+
+  size_t i = 0;
+  while (i < src_len) {
+    int skip = get_match_length(&src_ptr[i], src_len - i);
+    if (skip > 0) {
+      *dst_ptr++ = 0x20;
+      i += skip;
+    } else {
+      *dst_ptr++ = src[i];
+      i++;
+    }
+  }
+  *dst_ptr = '\0';
+  return dst;
+}
+
+// ============================================================================
+// STRUCTURES DU PARSER
+// ============================================================================
+typedef struct {
+  char *plain_content;
+  size_t plain_len;
+  char *html_content;
+  size_t html_len;
+  char *attachments_txt;
+  size_t attach_len;
+  char *urls_txt;
+  size_t urls_len;
+  Arena *arena;
+} ParserContext;
+
+// ============================================================================
+// FONCTIONS UTILITAIRES, JSON ET EXTRACTION DE LIENS
+// ============================================================================
+static char *echapper_json_string(Arena *arena, const char *str) {
+  if (!arena)
+    return NULL;
+  if (!str)
+    return arena_strdup(arena, "");
+
+  size_t len = 0;
+  for (const char *p = str; *p; p++) {
+    if (*p == '"' || *p == '\\' || *p == '\n' || *p == '\r' || *p == '\t')
+      len += 2;
+    else
+      len++;
+  }
+  char *res = arena_alloc(arena, len + 1);
+  if (!res)
+    return NULL;
+
+  char *dst = res;
+  for (const char *p = str; *p; p++) {
+    switch (*p) {
+    case '"':
+      *dst++ = '\\';
+      *dst++ = '"';
+      break;
+    case '\\':
+      *dst++ = '\\';
+      *dst++ = '\\';
+      break;
+    case '\n':
+      *dst++ = '\\';
+      *dst++ = 'n';
+      break;
+    case '\r':
+      *dst++ = '\\';
+      *dst++ = 'r';
+      break;
+    case '\t':
+      *dst++ = '\\';
+      *dst++ = 't';
+      break;
+    default:
+      *dst++ = *p;
+      break;
+    }
+  }
+  *dst = '\0';
+  return res;
+}
+
+static void generer_headers_json(const char *output_dir, const char *msg_id,
+                                 const char *subject, const char *from,
+                                 const char *to, const char *cc,
+                                 const char *bcc, const char *raw_date,
+                                 const char *in_reply_to,
+                                 const char *references, Arena *arena) {
+  if (!output_dir || !arena) {
+    fprintf(stderr,
+            "Erreur : Paramètres invalides fournis à generer_headers_json\n");
+    return;
+  }
+
+  char json_path[1024];
+  snprintf(json_path, sizeof(json_path), "%s/headers.json", output_dir);
+
+  FILE *f = fopen(json_path, "wb");
+  if (!f) {
+    fprintf(stderr, "Erreur : Impossible de créer le fichier %s\n", json_path);
+    return;
+  }
+
+  fprintf(f, "{\n");
+  fprintf(f, "  \"Message-ID\": \"%s\",\n",
+          echapper_json_string(arena, msg_id));
+  fprintf(f, "  \"Subject\": \"%s\",\n", echapper_json_string(arena, subject));
+  fprintf(f, "  \"From\": \"%s\",\n", echapper_json_string(arena, from));
+  fprintf(f, "  \"To\": \"%s\",\n", echapper_json_string(arena, to));
+  fprintf(f, "  \"Cc\": \"%s\",\n", echapper_json_string(arena, cc));
+  fprintf(f, "  \"Bcc\": \"%s\",\n", echapper_json_string(arena, bcc));
+  fprintf(f, "  \"Date\": \"%s\",\n", echapper_json_string(arena, raw_date));
+  fprintf(f, "  \"In-Reply-To\": \"%s\",\n",
+          echapper_json_string(arena, in_reply_to));
+  fprintf(f, "  \"References\": \"%s\"\n",
+          echapper_json_string(arena, references));
+  fprintf(f, "}\n");
+  fclose(f);
+}
+
+static void extraire_urls_depuis_texte(Arena *arena, const char *text,
+                                       char **urls_txt, size_t *urls_len) {
+  if (!arena || !text || !urls_txt || !urls_len)
+    return;
+
+  const char *p = text;
+  while (*p) {
+    const char *p1 = strstr(p, "http://");
+    const char *p2 = strstr(p, "https://");
+    const char *next = NULL;
+
+    if (p1 && p2) {
+      next = (p1 < p2) ? p1 : p2;
+    } else {
+      next = p1 ? p1 : p2;
+    }
+
+    if (!next)
+      break;
+
+    p = next;
+    const char *start = p;
+    while (*p && !isspace((unsigned char)*p) && *p != '"' && *p != '\'' &&
+           *p != '<' && *p != '>') {
+      p++;
+    }
+    size_t len = p - start;
+    if (len > 0) {
+      char *url = arena_alloc(arena, len + 1);
+      if (url) {
+        memcpy(url, start, len);
+        url[len] = '\0';
+        arena_string_append_printf(arena, urls_txt, urls_len, "%s\n", url);
+      }
+    }
+  }
+}
+
+static void extraire_gumbo_texte_et_urls(GumboNode *node, ParserContext *ctx,
+                                         char **corps_txt, size_t *corps_len) {
+  if (!node || !ctx || !corps_txt || !corps_len)
+    return;
+
+  if (node->type == GUMBO_NODE_TEXT) {
+    arena_string_append(ctx->arena, corps_txt, corps_len, node->v.text.text);
+    return;
+  }
+
+  if (node->type != GUMBO_NODE_ELEMENT)
+    return;
+
+  GumboElement *element = &node->v.element;
+  if (element->tag == GUMBO_TAG_SCRIPT || element->tag == GUMBO_TAG_STYLE)
+    return;
+
+  if (element->tag == GUMBO_TAG_A) {
+    GumboAttribute *href = gumbo_get_attribute(&element->attributes, "href");
+    if (href && href->value &&
+        (strncmp(href->value, "http://", 7) == 0 ||
+         strncmp(href->value, "https://", 8) == 0)) {
+      arena_string_append_printf(ctx->arena, &ctx->urls_txt, &ctx->urls_len,
+                                 "%s\n", href->value);
+    }
+  }
+
+  GumboVector *children = &element->children;
+  if (children && children->data) {
+    for (unsigned int i = 0; i < children->length; ++i) {
+      extraire_gumbo_texte_et_urls((GumboNode *)children->data[i], ctx,
+                                   corps_txt, corps_len);
+    }
+  }
+
+  if (element->tag == GUMBO_TAG_P || element->tag == GUMBO_TAG_BR ||
+      element->tag == GUMBO_TAG_DIV || element->tag == GUMBO_TAG_TR) {
+    arena_string_append(ctx->arena, corps_txt, corps_len, "\n");
+  }
+}
+
+static char *parse_email_date_to_french(Arena *arena, GMimeMessage *message) {
+  if (!arena)
+    return NULL;
+  if (!message)
+    return arena_strdup(arena, "");
+
   GDateTime *gdt = g_mime_message_get_date(message);
   if (!gdt)
-    return g_strdup("");
+    return arena_strdup(arena, "");
 
   const char *jours_fr[] = {"dimanche", "lundi",    "mardi", "mercredi",
                             "jeudi",    "vendredi", "samedi"};
@@ -47,277 +410,262 @@ static gchar *parse_email_date_to_french(GMimeMessage *message) {
                            "août",    "septembre", "octobre", "novembre",
                            "décembre"};
 
-  GDateWeekday wd = g_date_time_get_day_of_week(gdt);
-  int day_idx =
-      (wd == 7) ? 0
-                : wd; // Ajustement si le dimanche est indexé à 7 par la GLib
+  int day_idx = (g_date_time_get_day_of_week(gdt) == 7)
+                    ? 0
+                    : g_date_time_get_day_of_week(gdt);
   int month_idx = g_date_time_get_month(gdt);
 
-  return g_strdup_printf("%s %02d %s %04d à %02d:%02d", jours_fr[day_idx],
-                         g_date_time_get_day_of_month(gdt), mois_fr[month_idx],
-                         g_date_time_get_year(gdt), g_date_time_get_hour(gdt),
-                         g_date_time_get_minute(gdt));
+  if (day_idx < 0 || day_idx > 6 || month_idx < 1 || month_idx > 12)
+    return arena_strdup(arena, "");
+
+  return arena_asprintf(arena, "%s %02d %s %04d à %02d:%02d", jours_fr[day_idx],
+                        g_date_time_get_day_of_month(gdt), mois_fr[month_idx],
+                        g_date_time_get_year(gdt), g_date_time_get_hour(gdt),
+                        g_date_time_get_minute(gdt));
 }
 
-// Génération du bloc textuel regroupant les en-têtes principaux (Date, De, À,
-// Cc)
-static gchar *generate_headers_text(GMimeMessage *message) {
-  GString *sb = g_string_new("");
-  gchar *french_date = parse_email_date_to_french(message);
-
-  // Tableau de structures temporaire pour boucler proprement sur les en-têtes
-  // essentiels
-  struct {
-    const char *label;
-    gchar *value;
-  } headers[] = {{"Date ", french_date},
-                 {"De   ", get_clean_header_value(message, "From")},
-                 {"À    ", get_clean_header_value(message, "To")},
-                 {"Cc   ", get_clean_header_value(message, "Cc")}};
-
-  for (size_t i = 0; i < 4; i++) {
-    if (headers[i].value && strlen(headers[i].value) > 0 &&
-        g_ascii_strcasecmp(headers[i].value, "none") != 0) {
-      g_string_append_printf(sb, "%s: %s\n", headers[i].label,
-                             headers[i].value);
-    }
-    g_free(headers[i].value); // Libération de la mémoire allouée par g_strdup
-  }
-  return g_string_free(sb, FALSE);
-}
-
-// Fonction de rappel (callback) récursive pour extraire le texte ou le HTML
-// (hors pièces jointes nommées)
-static void process_text_part(G_GNUC_UNUSED GMimeObject *parent,
+// ============================================================================
+// TRAITEMENT DES PIECES ET DU CONTENU MIME
+// ============================================================================
+static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
                               GMimeObject *part, gpointer user_data) {
-  TextParserContext *ctx = (TextParserContext *)user_data;
-
-  if (!GMIME_IS_PART(part))
+  if (!part || !user_data)
+    return;
+  ParserContext *ctx = (ParserContext *)user_data;
+  if (!ctx->arena)
     return;
 
-  GMimePart *mime_part = GMIME_PART(part);
   GMimeContentType *content_type = g_mime_object_get_content_type(part);
-  const char *filename = g_mime_part_get_filename(mime_part);
+  const char *disposition = g_mime_object_get_disposition(part);
 
-  // On ignore le traitement si la section MIME actuelle possède un nom de
-  // fichier (c'est une vraie pièce jointe)
-  if (filename == NULL) {
-    GMimeDataWrapper *content = g_mime_part_get_content(mime_part);
-    if (content) {
-      // Extraction du flux de données de la section vers la mémoire RAM
-      GMimeStream *mem_stream = g_mime_stream_mem_new();
-      g_mime_data_wrapper_write_to_stream(content, mem_stream);
-      g_mime_stream_seek(mem_stream, 0, GMIME_STREAM_SEEK_SET);
+  if (GMIME_IS_PART(part)) {
+    GMimePart *mime_part = GMIME_PART(part);
+    const char *filename = g_mime_part_get_filename(mime_part);
 
-      GByteArray *bytes =
-          g_mime_stream_mem_get_byte_array(GMIME_STREAM_MEM(mem_stream));
-      gchar *text = g_strndup((const gchar *)bytes->data, bytes->len);
-
-      // Tri et accumulation du contenu textuel selon son type MIME réel
-      if (g_mime_content_type_is_type(content_type, "text", "plain")) {
-        g_string_append(ctx->text_content, text);
-      } else if (g_mime_content_type_is_type(content_type, "text", "html")) {
-        g_string_append(ctx->html_content, text);
+    if (filename == NULL &&
+        (!disposition || strcasecmp(disposition, "attachment") != 0)) {
+      if (GMIME_IS_TEXT_PART(part)) {
+        GMimeTextPart *text_part = GMIME_TEXT_PART(part);
+        char *gm_text = g_mime_text_part_get_text(text_part);
+        if (gm_text) {
+          char *text = arena_strdup(ctx->arena, gm_text);
+          g_free(gm_text); // Libération du texte GMime
+          if (text) {
+            if (content_type &&
+                g_mime_content_type_is_type(content_type, "text", "plain")) {
+              arena_string_append(ctx->arena, &ctx->plain_content,
+                                  &ctx->plain_len, text);
+            } else if (content_type && g_mime_content_type_is_type(
+                                           content_type, "text", "html")) {
+              arena_string_append(ctx->arena, &ctx->html_content,
+                                  &ctx->html_len, text);
+            }
+          }
+        }
       }
-      g_free(text);
-      g_object_unref(mem_stream);
+    } else if (filename != NULL) {
+      size_t size = 0;
+      GMimeDataWrapper *content = g_mime_part_get_content(mime_part);
+      if (content) {
+        GMimeStream *stream = g_mime_data_wrapper_get_stream(content);
+        if (stream) {
+          ssize_t len = g_mime_stream_length(stream);
+          if (len > 0)
+            size = (size_t)len;
+        }
+      }
+      arena_string_append_printf(ctx->arena, &ctx->attachments_txt,
+                                 &ctx->attach_len, "- %s (%zu octets)\n",
+                                 filename, size);
     }
   }
 }
 
-// MOTEUR DE CONVERSION : Utilisation du rendu de w3m pour un affichage terminal
-// parfait
-static gchar *strip_html_tags(const gchar *html_or_path) {
-  if (!html_or_path || strlen(html_or_path) == 0)
-    return g_strdup("");
-
-  gchar *w3m_result = NULL;
-  GError *error = NULL;
-  gint exit_status;
-  gchar *command = NULL;
-
-  // Détection : Si la chaîne reçue commence par "<", c'est du code HTML brut
-  // (venant de GMime)
-  if (g_str_has_prefix(g_strstrip((gchar *)html_or_path), "<")) {
-    gchar *tmp_path = NULL;
-    gint tmp_fd = g_file_open_tmp("eml_to_txt_XXXXXX.html", &tmp_path, NULL);
-    if (tmp_fd != -1) {
-      write(tmp_fd, html_or_path, strlen(html_or_path));
-      close(tmp_fd);
-
-      // -T text/html : force le type
-      // -dump : affiche le rendu textuel formaté sur stdout
-      // -cols 80 : calibre le rendu sur 80 colonnes standard pour NeoMutt
-      command =
-          g_strdup_printf("w3m -T text/html -dump -cols 80 \"%s\"", tmp_path);
-      g_spawn_command_line_sync(command, &w3m_result, NULL, &exit_status,
-                                &error);
-      unlink(tmp_path);
-      g_free(tmp_path);
-      g_free(command);
-    }
-  } else {
-    // Cas NeoMutt direct : w3m lit directement le fichier temporaire de Mutt
-    command =
-        g_strdup_printf("w3m -T text/html -dump -cols 80 \"%s\"", html_or_path);
-    g_spawn_command_line_sync(command, &w3m_result, NULL, &exit_status, &error);
-    g_free(command);
-  }
-
-  if (!error && exit_status == 0 && w3m_result != NULL) {
-    // Nettoyage des sauts de lignes multiples pour garder un affichage compact
-    GRegex *regex_newlines = g_regex_new("\n{3,}", G_REGEX_MULTILINE, 0, NULL);
-    gchar *final_text = g_regex_replace_literal(regex_newlines, w3m_result, -1,
-                                                0, "\n\n", 0, NULL);
-    g_regex_unref(regex_newlines);
-    g_free(w3m_result);
-
-    return g_strstrip(final_text);
-  }
-
-  if (error) {
-    g_printerr("Erreur d'exécution de w3m : %s\n", error->message);
-    g_error_free(error);
-  }
-
-  return g_strdup("(Erreur lors du rendu HTML via w3m)");
-}
-// Fonction maîtresse de traitement du fichier
+// ============================================================================
+// COEUR DE L'APPLICATION
+// ============================================================================
 void eml_to_txt(const char *eml_path, const char *output_txt_path) {
-  // Modification du nom de thread pour faciliter le debug système
-  prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
-
-  gchar *full_txt_result = NULL;
-  gchar *file_content = NULL;
-  gsize file_length = 0;
-
-  // ÉTAPE 1 : Lecture brute de l'intégralité du fichier d'entrée
-  if (!g_file_get_contents(eml_path, &file_content, &file_length, NULL)) {
-    g_printerr("Erreur : Impossible de lire le fichier source %s\n", eml_path);
+  if (!eml_path || !output_txt_path) {
+    fprintf(stderr,
+            "Erreur : Chemins d'entrée ou de sortie invalides (NULL).\n");
     return;
   }
 
-  // ÉTAPE 2 : Détection adaptative du format d'entrée (Cas NeoMutt Mailcap vs
-  // Fichier EML entier) Si le fichier s'ouvre directement par une balise '<' ou
-  // qu'il ne comporte aucune mention de version MIME, c'est que NeoMutt a déjà
-  // isolé la pièce jointe HTML brute et nous la pousse via son pager.
-  gboolean is_pure_html = FALSE;
-  if (g_str_has_prefix(g_strstrip(file_content), "<") ||
-      strstr(file_content, "MIME-Version:") == NULL) {
-    is_pure_html = TRUE;
+  prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
+  Arena *arena = arena_create(16 * 1024 * 1024);
+
+  GMimeStream *stream = g_mime_stream_file_open(eml_path, "r", NULL);
+  if (!stream) {
+    fprintf(stderr, "Erreur : Impossible d'ouvrir %s\n", eml_path);
+    arena_destroy(arena);
+    return;
   }
 
-  if (is_pure_html) {
-    // --- LOGIQUE A : CAS MUTT / MAILCAP ---
-    // Le fichier est déjà du HTML pur. On le passe directement à Pandoc pour
-    // obtenir du Markdown.
-    gchar *body = strip_html_tags(file_content);
-    full_txt_result = g_strdup_printf("%s\n", body);
-    g_free(body);
-  } else {
-    // --- LOGIQUE B : CAS STANDARD (FICHIER .EML ENTIER) ---
-    // Utilisation de la bibliothèque GMime pour analyser la structure du mail
-    // complet
-    GMimeStream *stream = g_mime_stream_file_open(eml_path, "r", NULL);
-    if (stream) {
-      GMimeParser *parser = g_mime_parser_new_with_stream(stream);
-      GMimeMessage *message = g_mime_parser_construct_message(parser, NULL);
+  GMimeParser *parser = g_mime_parser_new();
+  if (!parser) {
+    fprintf(stderr, "Erreur : Échec de l'allocation du parser GMime.\n");
+    g_object_unref(stream);
+    arena_destroy(arena);
+    return;
+  }
 
-      if (message) {
-        gchar *headers_txt = generate_headers_text(message);
-        const char *subject = g_mime_message_get_subject(message);
-        if (!subject)
-          subject = "Sans titre";
+  g_mime_parser_init_with_stream(parser, stream);
+  GMimeMessage *message = g_mime_parser_construct_message(parser, NULL);
 
-        TextParserContext ctx;
-        ctx.text_content = g_string_new("");
-        ctx.html_content = g_string_new("");
+  if (!message) {
+    fprintf(stderr, "Erreur : Échec du parsing GMime.\n");
+    g_object_unref(parser);
+    g_object_unref(stream);
+    arena_destroy(arena);
+    return;
+  }
 
-        // Scan récursif de toutes les sous-sections du courriel
-        g_mime_message_foreach(message, process_text_part, &ctx);
+  const char *subject = g_mime_message_get_subject(message);
+  if (!subject)
+    subject = "";
 
-        // ARBITRAGE INTELLIGENT DE RENDU :
-        gchar *body = NULL;
-        if (ctx.text_content->len > 0) {
-          // S'il y a du texte brut natif fourni par l'expéditeur, on le
-          // privilégie (rapidité absolue)
-          body = g_strdup(g_strstrip(ctx.text_content->str));
-        } else if (ctx.html_content->len > 0) {
-          // S'il n'y a QUE du HTML (cas des newsletters), on invoque Pandoc
-          // pour créer un Markdown propre
-          body = strip_html_tags(ctx.html_content->str);
-        } else {
-          body = g_strdup("(Message vide)");
-        }
+  InternetAddressList *from_list = g_mime_message_get_from(message);
+  InternetAddressList *to_list = g_mime_message_get_to(message);
+  InternetAddressList *cc_list = g_mime_message_get_cc(message);
+  InternetAddressList *bcc_list = g_mime_message_get_bcc(message);
 
-        // Assemblage final du document textuel structuré (Sujet + En-têtes +
-        // Corps converti)
-        full_txt_result = g_strdup_printf(
-            "SUJET: "
-            "%s\n%s--------------------------------------------------\n\n%s\n",
-            subject, headers_txt, body);
+  char *from_str = from_list
+                       ? internet_address_list_to_string(from_list, NULL, FALSE)
+                       : NULL;
+  char *to_str =
+      to_list ? internet_address_list_to_string(to_list, NULL, FALSE) : NULL;
+  char *cc_str =
+      cc_list ? internet_address_list_to_string(cc_list, NULL, FALSE) : NULL;
+  char *bcc_str =
+      bcc_list ? internet_address_list_to_string(bcc_list, NULL, FALSE) : NULL;
 
-        g_free(body);
-        g_string_free(ctx.text_content, TRUE);
-        g_string_free(ctx.html_content, TRUE);
-        g_free(headers_txt);
-        g_object_unref(message);
-      }
-      g_object_unref(parser);
-      g_object_unref(stream);
+  const char *msg_id = g_mime_message_get_message_id(message);
+  if (!msg_id)
+    msg_id = "";
+
+  const char *raw_date =
+      g_mime_object_get_header(GMIME_OBJECT(message), "Date");
+  if (!raw_date)
+    raw_date = "";
+  const char *in_reply_to =
+      g_mime_object_get_header(GMIME_OBJECT(message), "In-Reply-To");
+  if (!in_reply_to)
+    in_reply_to = "";
+  const char *references =
+      g_mime_object_get_header(GMIME_OBJECT(message), "References");
+  if (!references)
+    references = "";
+
+  char *french_date = parse_email_date_to_french(arena, message);
+
+  char *txt_path_copy = arena_strdup(arena, output_txt_path);
+  char *output_dir = txt_path_copy ? dirname(txt_path_copy) : ".";
+
+  generer_headers_json(output_dir, msg_id, subject, from_str ? from_str : "",
+                       to_str ? to_str : "", cc_str ? cc_str : "",
+                       bcc_str ? bcc_str : "", raw_date, in_reply_to,
+                       references, arena);
+
+  ParserContext ctx = {.plain_content = arena_strdup(arena, ""),
+                       .plain_len = 0,
+                       .html_content = arena_strdup(arena, ""),
+                       .html_len = 0,
+                       .attachments_txt = arena_strdup(arena, ""),
+                       .attach_len = 0,
+                       .urls_txt = arena_strdup(arena, ""),
+                       .urls_len = 0,
+                       .arena = arena};
+
+  g_mime_message_foreach(message, process_mime_part, &ctx);
+
+  char *corps_final = arena_strdup(arena, "");
+  size_t corps_final_len = 0;
+
+  if (ctx.plain_len > 0 && ctx.plain_content) {
+    arena_string_append(arena, &corps_final, &corps_final_len,
+                        ctx.plain_content);
+    extraire_urls_depuis_texte(arena, corps_final, &ctx.urls_txt,
+                               &ctx.urls_len);
+  } else if (ctx.html_len > 0 && ctx.html_content) {
+    GumboOutput *gumbo_out = gumbo_parse(ctx.html_content);
+    if (gumbo_out) {
+      extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final,
+                                   &corps_final_len);
+      gumbo_destroy_output(&kGumboDefaultOptions, gumbo_out);
     }
   }
-  g_free(file_content);
 
-  // Sécurité anti-crash globale
-  if (!full_txt_result) {
-    full_txt_result = g_strdup("(Erreur lors du traitement du message)");
+  if (corps_final_len > 0 && corps_final) {
+    corps_final = nettoyer_espaces_texte(arena, corps_final);
   }
 
-  // ÉTAPE 3 : Écriture intelligente et contournement du bug GLib sur
-  // /dev/stdout g_file_set_contents écrit d'abord dans un fichier temporaire
-  // masqué (ex: /dev/stdout.TMP) puis le renomme. Cela provoque un crash
-  // "Permission Denied" sur la console. On l'esquive en repérant le
-  // périphérique virtuel.
-  if (g_strcmp0(output_txt_path, "/dev/stdout") == 0 ||
-      g_strcmp0(output_txt_path, "-") == 0) {
-    // Envoi brut et direct sur la console (Afficheur interactif de NeoMutt)
-    g_print("%s", full_txt_result);
+  FILE *f = fopen(output_txt_path, "wb");
+  if (f) {
+    fprintf(f, "Date : %s\n", french_date ? french_date : "");
+    if (from_str)
+      fprintf(f, "De : %s\n", from_str);
+    if (to_str)
+      fprintf(f, "À : %s\n", to_str);
+    if (cc_str)
+      fprintf(f, "Copie : %s\n", cc_str);
+    if (bcc_str)
+      fprintf(f, "Copie Cachée : %s\n", bcc_str);
+    fprintf(f, "Sujet : %s\n", subject);
+    if (msg_id && strlen(msg_id) > 0)
+      fprintf(f, "Identifiant : %s\n", msg_id);
+
+    fprintf(f, "---\n");
+    fprintf(f, "Pièces jointes :\n");
+    if (ctx.attach_len > 0 && ctx.attachments_txt)
+      fprintf(f, "%s", ctx.attachments_txt);
+    else
+      fprintf(f, "Aucune\n");
+
+    fprintf(f, "---\n");
+    fprintf(f, "%s\n", corps_final ? corps_final : "");
+
+    fprintf(f, "---\n");
+    fprintf(f, "URLs détectées :\n");
+    if (ctx.urls_len > 0 && ctx.urls_txt)
+      fprintf(f, "%s", ctx.urls_txt);
+    else
+      fprintf(f, "Aucune\n");
+
+    fclose(f);
+    printf("Export texte brut réussi : %s\n", output_txt_path);
   } else {
-    // Écriture standard sécurisée dans un vrai fichier physique (.txt) sur
-    // l'espace disque
-    GError *error = NULL;
-    g_file_set_contents(output_txt_path, full_txt_result, -1, &error);
-    if (error) {
-      g_printerr("Erreur d'écriture du fichier texte : %s\n", error->message);
-      g_error_free(error);
-    }
+    fprintf(stderr, "Erreur : Impossible d'écrire le fichier %s\n",
+            output_txt_path);
   }
-  g_free(full_txt_result);
+
+  if (from_str)
+    g_free(from_str);
+  if (to_str)
+    g_free(to_str);
+  if (cc_str)
+    g_free(cc_str);
+  if (bcc_str)
+    g_free(bcc_str);
+
+  g_object_unref(message);
+  g_object_unref(parser);
+  g_object_unref(stream);
+
+  arena_destroy(arena);
 }
 
 int main(int argc, char *argv[]) {
-  // Initialisation globale de l'écosystème GMime
+  setlocale(LC_ALL, "C.UTF-8");
   g_mime_init();
 
-  if (argc < 3) {
-    g_print("Usage : %s <eml_path> <output_txt_path>\n", argv[0]);
-    g_mime_shutdown();
-    return 0;
-  }
-
-  // Sécurité : On s'assure que le fichier source existe avant de lancer le
-  // traitement
-  if (!g_file_test(argv[1], G_FILE_TEST_EXISTS)) {
-    g_printerr("Erreur : Le fichier source '%s' n'existe pas.\n", argv[1]);
+  if (argc < 3 || !argv[1] || !argv[2]) {
+    printf("Usage : %s <eml_path> <output_txt>\n",
+           argv[0] ? argv[0] : PROGRAMME_NAME);
     g_mime_shutdown();
     return 1;
   }
 
-  // Lancement de la moulinette
   eml_to_txt(argv[1], argv[2]);
-
-  // Désallocation propre des structures GMime de la mémoire
   g_mime_shutdown();
   return 0;
 }

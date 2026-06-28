@@ -15,6 +15,52 @@
 #define PROGRAMME_NAME "eml_to_html"
 
 // ============================================================================
+// ENGINE ET CONVERTISSEUR D'ESPACES UNICODE
+// ============================================================================
+typedef struct {
+  unsigned char bytes[3];
+  int length;
+} EspaceUnicode;
+
+// Table contenant les séquences UTF-8 des espaces à convertir
+static const EspaceUnicode espaces_table[] = {
+    {{0xC2, 0xA0, 0x00}, 2}, // U+00A0 (NBSP)
+    {{0xE1, 0x9A, 0x80}, 3}, // U+1680
+    {{0xE2, 0x80, 0x80}, 3}, // U+2000 à U+200A
+    {{0xE2, 0x80, 0x81}, 3}, {{0xE2, 0x80, 0x82}, 3}, {{0xE2, 0x80, 0x83}, 3},
+    {{0xE2, 0x80, 0x84}, 3}, {{0xE2, 0x80, 0x85}, 3}, {{0xE2, 0x80, 0x86}, 3},
+    {{0xE2, 0x80, 0x87}, 3}, // U+2007 (Figure Space)
+    {{0xE2, 0x80, 0x88}, 3}, {{0xE2, 0x80, 0x89}, 3}, {{0xE2, 0x80, 0x8A}, 3},
+    {{0xE2, 0x80, 0xAF}, 3}, // U+202F (Narrow NBSP)
+    {{0xE2, 0x81, 0x9F}, 3}, // U+205F
+    {{0xE3, 0x80, 0x80}, 3}  // U+3000
+};
+
+#define NB_ESPACES (sizeof(espaces_table) / sizeof(EspaceUnicode))
+
+// Vérifie si la séquence actuelle correspond à un espace insécable ou spécial
+static int get_space_match_length(const unsigned char *ptr) {
+  if (!ptr || *ptr == '\0')
+    return 0;
+
+  size_t remaining = strlen((const char *)ptr);
+  for (size_t i = 0; i < NB_ESPACES; i++) {
+    if (remaining >= (size_t)espaces_table[i].length) {
+      int match = 1;
+      for (int j = 0; j < espaces_table[i].length; j++) {
+        if (ptr[j] != espaces_table[i].bytes[j]) {
+          match = 0;
+          break;
+        }
+      }
+      if (match)
+        return espaces_table[i].length;
+    }
+  }
+  return 0;
+}
+
+// ============================================================================
 // STRUCTURE & ENGINE DE L'ARENA MEMOIRE
 // ============================================================================
 typedef struct {
@@ -86,13 +132,12 @@ typedef struct {
   GHashTable *inline_images;
   const char *folder_name;
   const char *final_assets_dir;
-  Arena *arena; // Référence vers l'arena globale
+  Arena *arena;
 } ParserContext;
 
 // ============================================================================
 // STRUCTURES DES HEADERS HTML
 // ============================================================================
-// Prototypes pour éviter les déclarations implicites
 typedef struct {
   GMimeMessage *message;
   const char *subject;
@@ -132,7 +177,6 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
   if (!arena || !stream || !parser || !out_headers)
     return;
 
-  // Initialisation et parsing GMime 3.0 strict
   g_mime_parser_init_with_stream(parser, stream);
   GMimeMessage *message = g_mime_parser_construct_message(parser, NULL);
   out_headers->message = message;
@@ -140,7 +184,6 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
   if (!message)
     return;
 
-  // 1. Extraction des données de base
   const char *msg_id = g_mime_message_get_message_id(message);
   const char *subject = g_mime_message_get_subject(message);
   if (!subject)
@@ -150,10 +193,8 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
   InternetAddressList *from_list = g_mime_message_get_from(message);
   InternetAddressList *to_list = g_mime_message_get_to(message);
   InternetAddressList *cc_list = g_mime_message_get_cc(message);
-  // CORRECTION ICI : API GMime 3.0 exacte pour le BCC
   InternetAddressList *bcc_list = g_mime_message_get_bcc(message);
 
-  // Sauvegarde des chaînes allouées
   out_headers->from_str =
       from_list ? internet_address_list_to_string(from_list, NULL, FALSE)
                 : NULL;
@@ -173,13 +214,11 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
 
   char *french_date = parse_email_date_to_french(arena, message);
 
-  // 2. Création immédiate du fichier headers.json
   export_metadata_json(arena, msg_id, subject, out_headers->from_str,
                        out_headers->to_str, out_headers->cc_str,
                        out_headers->bcc_str, raw_date, in_reply_to, references,
                        output_html_path);
 
-  // 3. Préparation des éléments visuels pour le HTML
   out_headers->safe_page_title = generer_titre_page(arena, message);
   out_headers->headers_html = generate_headers_html(
       arena, french_date, out_headers->from_str, out_headers->to_str,
@@ -187,7 +226,6 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
       references);
 }
 
-// Concaténation de chaînes optimisée pour l'Arena
 static void arena_string_append(Arena *arena, char **dest, size_t *current_len,
                                 const char *src) {
   if (!src)
@@ -219,7 +257,6 @@ static void arena_string_append_printf(Arena *arena, char **dest,
   arena_string_append(arena, dest, current_len, formatted);
 }
 
-// Nettoyage en place
 static void c_strstrip(char *s) {
   char *start = s;
   while (isspace((unsigned char)*start))
@@ -233,8 +270,6 @@ static void c_strstrip(char *s) {
   s[len] = '\0';
 }
 
-// Fonction interne pour obtenir la taille d'un caractère UTF-8 valide
-// Renvoie 0 si la séquence est invalide (Corrupt/Latin-1 résiduel)
 static int get_utf8_length(const unsigned char *utf8_bytes) {
   if (!utf8_bytes)
     return 0;
@@ -252,43 +287,32 @@ static int get_utf8_length(const unsigned char *utf8_bytes) {
   return 0;
 }
 
-// Vérifie si le lecteur actuel est positionné sur le début d'une entité HTML
-// valide. Renvoie la longueur totale de l'entité (ex: 6 pour "&quot;"), ou 0 si
-// ce n'est pas une entité.
 static size_t get_html_entity_length(const unsigned char *reader) {
-  // Sécurité : On s'assure que le pointeur et la donnée pointée existent
   if (!reader || *reader == '\0')
     return 0;
   if (reader[0] != '&')
     return 0;
 
-  // 'checker' va analyser la structure des caractères qui suivent le '&'
   const unsigned char *checker = reader + 1;
 
-  // Cas 1 : Entité numérique (Ex: &#232; ou &#x00E8;)
   if (*checker == '#') {
     checker++;
-    if (*checker == 'x' || *checker == 'X') { // Format Hexadécimal
+    if (*checker == 'x' || *checker == 'X') {
       checker++;
       while (*checker && isxdigit(*checker))
         checker++;
-    } else { // Format Décimal
+    } else {
       while (*checker && isdigit(*checker))
         checker++;
     }
-
-    // Si la séquence se termine bien par un ';', c'est une entité valide
     if (*checker == ';')
       return (checker - reader) + 1;
     return 0;
   }
 
-  // Cas 2 : Entité nommée (Ex: &eacute; &lt; &amp; &quot;)
   if (isalpha(*checker)) {
     while (*checker && isalnum(*checker))
       checker++;
-
-    // Si la séquence se termine bien par un ';', c'est une entité valide
     if (*checker == ';')
       return (checker - reader) + 1;
   }
@@ -324,7 +348,6 @@ static char *html_escape(Arena *arena, const char *text) {
   const unsigned char *reader = (const unsigned char *)text;
   size_t required_len = 0;
 
-  // Étape 1 : Calcul de la taille requise
   while (*reader) {
     size_t entity_len = get_html_entity_length(reader);
     if (entity_len > 0) {
@@ -335,7 +358,7 @@ static char *html_escape(Arena *arena, const char *text) {
 
     int utf8_len = get_utf8_length(reader);
     if (utf8_len == 0) {
-      required_len += 3; // Caractère de substitution
+      required_len += 3;
       reader++;
     } else if (utf8_len == 1) {
       if (*reader == '<' || *reader == '>')
@@ -353,7 +376,6 @@ static char *html_escape(Arena *arena, const char *text) {
     }
   }
 
-  // Étape 2 : Allocation et copie stricte
   char *result = arena_alloc(arena, required_len + 1);
   char *writer = result;
   reader = (const unsigned char *)text;
@@ -391,8 +413,6 @@ static char *html_escape(Arena *arena, const char *text) {
       }
       reader++;
     } else {
-      // Sécurité : On s'assure de ne pas dépasser si la fin de chaîne est
-      // proche
       memcpy(writer, reader, utf8_len);
       writer += utf8_len;
       reader += utf8_len;
@@ -438,37 +458,60 @@ void html_prettifier_to_file(Arena *arena, GumboNode *node, int profondeur,
       css_prettifier_to_file(node->v.text.text, output);
     } else {
       const char *text = node->v.text.text;
-      int contient_du_texte = 0;
-      for (int i = 0; text[i] != '\0'; i++) {
-        if (text[i] != ' ' && text[i] != '\n' && text[i] != '\r' &&
-            text[i] != '\t') {
-          contient_du_texte = 1;
-          break;
+
+      // On vérifie si on doit préserver les espaces (ex: balise <pre>)
+      int preserver_espaces = 0;
+      if (node->parent && node->parent->type == GUMBO_NODE_ELEMENT) {
+        if (node->parent->v.element.tag == GUMBO_TAG_PRE) {
+          preserver_espaces = 1;
         }
       }
-      if (contient_du_texte) {
-        // Au lieu d'utiliser le lourd html_escape qui casse l'UTF-8 de Gumbo,
-        // on écrit les caractères un par un en n'échappant que le strict
-        // nécessaire HTML.
+
+      if (preserver_espaces) {
+        // Mode brut : on écrit tout tel quel
         while (*text) {
-          if (*text == '<')
-            fputs("&lt;", output);
-          else if (*text == '>')
-            fputs("&gt;", output);
-          else if (*text == '&') {
-            // Si c'est un & déjà suivi d'une entité, on le laisse, sinon on
-            // l'échappe
-            if (get_html_entity_length((const unsigned char *)text) > 0) {
-              fputc(*text, output);
-            } else {
-              fputs("&amp;", output);
-            }
-          } else if (*text == '"')
-            fputs("&quot;", output);
-          else
-            fputc(*text,
-                  output); // On laisse passer l'UTF-8 intact (é, è, à, etc.)
+          fputc(*text, output);
           text++;
+        }
+      } else {
+        // Mode HTML standard : effondrement des espaces et des sauts de ligne
+        int espace_recurent = 0;
+        while (*text) {
+          int skip_space = get_space_match_length((const unsigned char *)text);
+          if (skip_space > 0) {
+            if (!espace_recurent) {
+              fputc(0x20, output);
+              espace_recurent = 1;
+            }
+            text += skip_space;
+            continue;
+          }
+
+          if (*text == ' ' || *text == '\n' || *text == '\r' || *text == '\t') {
+            if (!espace_recurent) {
+              fputc(0x20, output);
+              espace_recurent = 1;
+            }
+            text++;
+          } else {
+            espace_recurent = 0; // On a du vrai texte, on reset le flag
+
+            if (*text == '<')
+              fputs("&lt;", output);
+            else if (*text == '>')
+              fputs("&gt;", output);
+            else if (*text == '&') {
+              if (get_html_entity_length((const unsigned char *)text) > 0) {
+                fputc(*text, output);
+              } else {
+                fputs("&amp;", output);
+              }
+            } else if (*text == '"')
+              fputs("&quot;", output);
+            else
+              fputc(*text, output);
+            text++;
+          }
         }
       }
     }
@@ -487,20 +530,16 @@ void html_prettifier_to_file(Arena *arena, GumboNode *node, int profondeur,
   fputc('\n', output);
   indent_html(profondeur, output);
 
-  // CORRECTION : Si le tag n'est pas standard, on extrait son vrai nom depuis
-  // le tag original
   const char *tag_name = gumbo_normalized_tagname(element->tag);
   char tag_custom[128] = {0};
 
   if (!tag_name || strlen(tag_name) == 0) {
-    // Si gumbo ne connaît pas, on lit le tag d'origine (ex: <o:p> -> "o:p")
     gumbo_tag_from_original_text(&element->original_tag);
     if (element->original_tag.data && element->original_tag.length > 0) {
       size_t len = element->original_tag.length;
       if (len > sizeof(tag_custom) - 1)
         len = sizeof(tag_custom) - 1;
 
-      // On nettoie pour enlever les éventuels '<', '>' ou espaces
       size_t idx = 0;
       for (size_t i = 0; i < len; i++) {
         char c = element->original_tag.data[i];
@@ -508,7 +547,6 @@ void html_prettifier_to_file(Arena *arena, GumboNode *node, int profondeur,
             c != '\n' && c != '\r') {
           tag_custom[idx++] = c;
         } else if (idx > 0) {
-          // On s'arrête au premier espace après le nom de la balise
           break;
         }
       }
@@ -517,8 +555,6 @@ void html_prettifier_to_file(Arena *arena, GumboNode *node, int profondeur,
     }
   }
 
-  // Sécurité ultime : si vraiment on n'a rien, on met un conteneur générique ou
-  // on l'ignore
   if (!tag_name || strlen(tag_name) == 0) {
     tag_name = "span";
   }
@@ -563,31 +599,22 @@ void nettoyer_arbre(GumboNode *node) {
 
   GumboElement *element = &node->v.element;
 
-  // --- 1. SUPPRESSION DES BALISES ENTIÈRES ---
   if (element->tag == GUMBO_TAG_SCRIPT || element->tag == GUMBO_TAG_NOSCRIPT) {
-    // Ici, votre logique de reconstruction devra ignorer ce nœud et ses enfants
     return;
   }
 
-  // --- 2. NETTOYAGE DES ATTRIBUTS DE LA BALISE (Point 3) ---
   GumboVector *attributes = &element->attributes;
   for (unsigned int i = 0; i < attributes->length; ++i) {
     GumboAttribute *attr = (GumboAttribute *)attributes->data[i];
 
-    // Copie locale du nom de l'attribut pour analyse
     char attr_name[256];
     strncpy(attr_name, attr->name, sizeof(attr_name) - 1);
     en_minuscules(attr_name);
 
-    // A. On cherche les attributs événementiels qui commencent par "on" (ex:
-    // onclick, onload)
     if (strncmp(attr_name, "on", 2) == 0) {
       printf("Attribut dangereux détecté et supprimé : %s\n", attr->name);
-      // Logique de suppression de l'attribut
     }
 
-    // B. On cherche les liens suspect qui exécutent du JS (ex:
-    // href="javascript:alert(1)")
     if (strcmp(attr_name, "href") == 0 || strcmp(attr_name, "src") == 0) {
       char attr_value[512];
       strncpy(attr_value, attr->value, sizeof(attr_value) - 1);
@@ -595,12 +622,10 @@ void nettoyer_arbre(GumboNode *node) {
 
       if (strncmp(attr_value, "javascript:", 11) == 0) {
         printf("Lien JavaScript détecté et neutralisé dans : %s\n", attr->name);
-        // Logique pour vider ou remplacer la valeur (ex: attr->value = "#")
       }
     }
   }
 
-  // --- 3. RÉCURSION ---
   GumboVector *children = &element->children;
   for (unsigned int i = 0; i < children->length; ++i) {
     nettoyer_arbre((GumboNode *)children->data[i]);
@@ -623,7 +648,7 @@ static char *get_clean_header_value(Arena *arena, GMimeMessage *message,
 
   c_strstrip(decoded);
   char *arena_val = arena_strdup(arena, decoded);
-  g_free(decoded); // Libère la mémoire intermédiaire GMime
+  g_free(decoded);
   return arena_val;
 }
 
@@ -668,8 +693,6 @@ static char *generate_headers_html(Arena *arena, const char *french_date,
   char *sb = arena_strdup(arena, "");
   size_t sb_len = 0;
 
-  // Structure des en-têtes avec vérification NULL intégrée (remplacement par ""
-  // si NULL)
   struct {
     const char *label;
     const char *value;
@@ -685,13 +708,9 @@ static char *generate_headers_html(Arena *arena, const char *french_date,
 
   for (size_t i = 0; i < sizeof(headers) / sizeof(headers[0]); i++) {
     if (headers[i].value && strlen(headers[i].value) > 0) {
-      // On fait une copie temporaire dans l'Arena pour pouvoir la nettoyer
-      // (strip)
       char *val_copy = arena_strdup(arena, headers[i].value);
       c_strstrip(val_copy);
 
-      // On n'affiche pas l'en-tête s'il est vide ou s'il contient explicitement
-      // "none"
       if (strcasecmp(val_copy, "none") != 0 && strlen(val_copy) > 0) {
         char *safe_val = html_escape(arena, val_copy);
         if (sb_len > 0) {
@@ -712,7 +731,6 @@ static char *json_escape(Arena *arena, const char *text) {
   if (!text)
     return arena_strdup(arena, "");
 
-  // Étape 1 : Calcul de la taille requise
   size_t len_requise = 0;
   const char *lecteur_source = text;
 
@@ -721,17 +739,16 @@ static char *json_escape(Arena *arena, const char *text) {
     if (caractere_actuel == '"' || caractere_actuel == '\\' ||
         caractere_actuel == '\n' || caractere_actuel == '\r' ||
         caractere_actuel == '\t') {
-      len_requise += 2; // Compte l'antislash d'échappement + le caractère
+      len_requise += 2;
     } else {
       len_requise++;
     }
     lecteur_source++;
   }
 
-  // Étape 2 : Allocation et copie avec échappement
   char *chaine_destination = arena_alloc(arena, len_requise + 1);
   char *curseur_ecriture = chaine_destination;
-  lecteur_source = text; // Réinitialisation du lecteur au début du texte
+  lecteur_source = text;
 
   while (*lecteur_source) {
     char caractere_actuel = *lecteur_source;
@@ -758,7 +775,7 @@ static char *json_escape(Arena *arena, const char *text) {
     lecteur_source++;
   }
 
-  *curseur_ecriture = '\0'; // Finalisation de la chaîne C
+  *curseur_ecriture = '\0';
   return chaine_destination;
 }
 
@@ -795,7 +812,6 @@ void export_metadata_json(Arena *arena, const char *msg_id, const char *subject,
     return;
   }
 
-  // CORRECTION ICI : utilisation des variables "val_..."
   char *safe_msg_id = json_escape(arena, val_msg_id);
   char *safe_subject = json_escape(arena, val_subject);
   char *safe_from = json_escape(arena, val_from);
@@ -841,25 +857,13 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
       (!disposition || strcasecmp(disposition, "attachment") != 0)) {
     if (GMIME_IS_TEXT_PART(part)) {
       GMimeTextPart *text_part = GMIME_TEXT_PART(part);
-
-      // 1. On demande à GMime de nous donner le texte.
-      // Grâce à g_mime_init() + setlocale(), GMime convertit automatiquement
-      // l'ISO-8859-1 en UTF-8.
       char *gm_text = g_mime_text_part_get_text(text_part);
 
       if (gm_text) {
-        // 2. IMPORTANT : On duplique immédiatement la chaîne dans notre Arena
-        // pour qu'elle appartienne à notre cycle de vie mémoire.
         char *text = arena_strdup(ctx->arena, gm_text);
-
-        // /!\ ATTENTION : Ne faites PAS g_free(gm_text);
-        // GMime gère la mémoire de gm_text en interne. Le libérer provoque des
-        // corruptions.
 
         if (content_type &&
             g_mime_content_type_is_type(content_type, "text", "html")) {
-          // Neutralisation d'une éventuelle balise charset conflictuelle dans
-          // le corps HTML
           char *conflict = strstr(text, "charset=");
           if (conflict) {
             memcpy(conflict, "disable=", 8);
@@ -868,8 +872,6 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
                               text);
         } else if (content_type &&
                    g_mime_content_type_is_type(content_type, "text", "plain")) {
-          // Notre html_escape va maintenant recevoir de l'UTF-8 propre (0xC3
-          // 0xA8) et non plus du Latin-1
           char *safe_text = html_escape(ctx->arena, text);
           arena_string_append(ctx->arena, &ctx->text_content, &ctx->text_len,
                               safe_text);
@@ -953,19 +955,22 @@ static char *convert_text_to_html_fallback(Arena *arena, const char *text) {
   char *sb = arena_strdup(arena, "<p>");
   size_t sb_len = 3;
 
-  char *line = strtok(escaped, "\n");
-  int i = 0;
-  while (line != NULL) {
-    if (strlen(line) == 0) {
-      arena_string_append(arena, &sb, &sb_len, "</p>\n<p>");
-    } else {
-      if (i > 0)
+  const char *p = escaped;
+  while (*p) {
+    if (*p == '\n') {
+      if (*(p + 1) == '\n') {
+        arena_string_append(arena, &sb, &sb_len, "</p>\n<p>");
+        p++;
+      } else {
         arena_string_append(arena, &sb, &sb_len, "<br>\n");
-      arena_string_append(arena, &sb, &sb_len, line);
+      }
+    } else if (*p != '\r') {
+      char temp[2] = {*p, '\0'};
+      arena_string_append(arena, &sb, &sb_len, temp);
     }
-    line = strtok(NULL, "\n");
-    i++;
+    p++;
   }
+
   arena_string_append(arena, &sb, &sb_len, "</p>");
   return sb;
 }
@@ -1235,7 +1240,7 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
 
   prctl(PR_SET_NAME, PROGRAMME_NAME, 0, 0, 0);
 
-  Arena *arena = arena_create(4 * 1024 * 1024);
+  Arena *arena = arena_create(16 * 1024 * 1024);
 
   char final_assets_dir[1024];
   char *folder_name = NULL;
@@ -1254,12 +1259,9 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
     return;
   }
 
-  // Déclaration unique du parser ici pour qu'il soit accessible à toute la
-  // fonction
   GMimeParser *parser = g_mime_parser_new();
   EmailHeaders hdrs = {0};
 
-  // Extraction des headers et export JSON immédiat
   extraire_et_exporter_headers(arena, stream, parser, output_html_path, &hdrs);
 
   ParserContext ctx = {.html_content = arena_strdup(arena, ""),
@@ -1288,6 +1290,7 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
       "  .eml-header-block { font-family: Arial, sans-serif; line-height: 1.6; "
       "margin: 20px; color: #333; }\n"
       "  .eml-header-block h2 { margin-top: 0; }\n"
+      "  .email-body p { margin: 1em 0; }\n"
       "  .eml-attachments h3 { color: #555; border-bottom: 1px solid #ccc; "
       "padding-bottom: 5px; }\n"
       "  .eml-attachments ul { list-style-type: none; padding-left: 0; }\n"
@@ -1332,7 +1335,6 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
             output_html_path);
   }
 
-  // Nettoyage final
   if (hdrs.from_str)
     g_free(hdrs.from_str);
   if (hdrs.to_str)
