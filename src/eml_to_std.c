@@ -372,42 +372,46 @@ int main(int argc, char *argv[]) {
                        .temp_eml_text = arena_strdup(arena, ""),
                        .arena = arena};
 
-  // Détection absolue du format (EML complet si From: ou MIME-Version:
-  // présents)
-  if (strstr(input_buf, "From:") || strstr(input_buf, "MIME-Version:")) {
+  // ============================================================================
+  // DEBUT DE LA ZONE MODIFIÉE
+  // ============================================================================
+  int is_eml = (strstr(input_buf, "From:") != NULL || strstr(input_buf, "MIME-Version:") != NULL);
+
+  if (is_eml) {
     g_mime_init();
-    GMimeStream *stream =
-        g_mime_stream_mem_new_with_buffer(input_buf, input_len);
+    GMimeStream *stream = g_mime_stream_mem_new_with_buffer(input_buf, input_len);
     GMimeParser *parser = g_mime_parser_new_with_stream(stream);
     GMimeMessage *message = g_mime_parser_construct_message(parser, NULL);
 
     if (message) {
       g_mime_message_foreach(message, process_mime_part, &ctx);
-
-      if (ctx.temp_eml_text && strlen(ctx.temp_eml_text) > 0) {
-        GumboOutput *gumbo_out = gumbo_parse(ctx.temp_eml_text);
-        if (gumbo_out) {
-          extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final,
-                                       &corps_final_len);
-          gumbo_destroy_output(&kGumboDefaultOptions, gumbo_out);
-        }
-      }
       g_object_unref(message);
     }
     g_object_unref(parser);
     g_object_unref(stream);
     g_mime_shutdown();
-  } else {
-    GumboOutput *gumbo_out = gumbo_parse(input_buf);
+  }
+
+  // Choix de la source HTML : soit l'extraction GMime, soit le buffer brut
+  const char *html_to_parse = NULL;
+  if (is_eml && ctx.temp_eml_text && strlen(ctx.temp_eml_text) > 0) {
+    html_to_parse = ctx.temp_eml_text;
+  } else if (!is_eml) {
+    html_to_parse = input_buf;
+  }
+
+  if (html_to_parse) {
+    GumboOutput *gumbo_out = gumbo_parse(html_to_parse);
     if (gumbo_out) {
-      extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final,
-                                   &corps_final_len);
+      extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final, &corps_final_len);
       gumbo_destroy_output(&kGumboDefaultOptions, gumbo_out);
     }
   }
+  // ============================================================================
+  // FIN DE LA ZONE MODIFIÉE
+  // ============================================================================
 
-  // Application des nettoyages de mise en page (Espaces décalés + Sauts
-  // excessifs)
+  // Application des nettoyages de mise en page (Espaces décalés + Sauts excessifs)
   if (corps_final_len > 0) {
     corps_final = nettoyer_espaces_texte(arena, corps_final);
     corps_final = condenser_sauts_lignes(arena, corps_final);
