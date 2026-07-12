@@ -423,26 +423,65 @@ static char *html_escape(Arena *arena, const char *text) {
 }
 
 static void css_prettifier_to_file(const char *text, FILE *output) {
-  if (!text || !output)
+  if (text == NULL || output == NULL) {
     return;
+  }
 
+  // On prépare nos curseurs pour la zone à traiter
+  const char *debut_css = text;
+  const char *fin_css = text + strlen(text);
+
+  // --- STRATÉGIE OUTLOOK : Si on repère vos balises fétiches ---
+  const char *outlook_check = strcasestr(text, "/* Font Definitions */");
+  if (outlook_check == NULL) {
+    outlook_check = strcasestr(text, "/* Style Definitions */");
+  }
+
+  if (outlook_check != NULL) {
+    // Mode chirurgical : on se cale sur le vrai CSS
+    debut_css = outlook_check;
+
+    // On cherche le "-->" qui ferme ce bloc de styles
+    const char *fin_outlook = strstr(debut_css, "-->");
+    if (fin_outlook != NULL) {
+      fin_css = fin_outlook;
+    }
+  }
+
+  // --- ÉTAPE DE FORMATAGE (Commune aux deux modes) ---
   fputc('\n', output);
 
-  while (*text) {
-    if (*text == ' ' || *text == '\n' || *text == '\r' || *text == '\t') {
-      text++;
+  const char *curseur = debut_css;
+  while (curseur < fin_css) {
+
+    // Élimination des commentaires HTML génériques si on en croise (mode
+    // classique)
+    if (strncmp(curseur, "", 3) == 0) {
+      curseur = curseur + 3;
       continue;
     }
-    if (*text == '{') {
-      fputs(" {\n    ", output);
-    } else if (*text == ';') {
-      fputs(";\n    ", output);
-    } else if (*text == '}') {
-      fputs("\n}\n\n", output);
-    } else {
-      fputc(*text, output);
+
+    // Nettoyage des espaces blancs et sauts de ligne d'origine
+    if (*curseur == ' ' || *curseur == '\n' || *curseur == '\r' ||
+        *curseur == '\t') {
+      curseur = curseur + 1;
     }
-    text++;
+    // Formatage cosmétique
+    else if (*curseur == '{') {
+      fputs(" {\n    ", output);
+      curseur = curseur + 1;
+    } else if (*curseur == ';') {
+      fputs(";\n    ", output);
+      curseur = curseur + 1;
+    } else if (*curseur == '}') {
+      fputs("\n}\n\n", output);
+      curseur = curseur + 1;
+    }
+    // Écriture du reste (sélecteurs, propriétés)
+    else {
+      fputc(*curseur, output);
+      curseur = curseur + 1;
+    }
   }
 }
 
@@ -1013,8 +1052,20 @@ static char *extraire_et_fusionner_styles(Arena *arena, const char *html_source,
       char *style_end = find_tag_case_insensitive(&html_source[i], "</style>");
       if (style_end) {
         size_t css_chunk_len = style_end - &html_source[i];
-        memcpy(&css_buf[c_idx], &html_source[i], css_chunk_len);
-        c_idx += css_chunk_len;
+
+        // --- NOUVEAU : On extrait le CSS en sautant ---
+        size_t chunk_pos = 0;
+        while (chunk_pos < css_chunk_len) {
+          if (chunk_pos <= css_chunk_len - 4 &&
+              strncmp(&html_source[i + chunk_pos], "", 3) == 0) {
+            chunk_pos += 3;
+            continue;
+          }
+          css_buf[c_idx++] = html_source[i + chunk_pos];
+          chunk_pos++;
+        }
+        // ---------------------------------------------------------
+
         css_buf[c_idx++] = '\n';
         i += css_chunk_len + 8;
         continue;
@@ -1284,22 +1335,31 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
   char *css_interne = NULL;
   final_body = extraire_et_fusionner_styles(arena, final_body, &css_interne);
 
+  // --- MODIFICATION ICI : DEUX BALISES STYLE SÉPARÉES ---
+  // Balise 1 : Vos styles d'en-têtes et de conteneurs de l'application
+  // (Intouchables) Balise 2 : Les styles d'origine de l'e-mail (Prêts à être
+  // embellis ou filtrés)
   char *custom_styles = arena_asprintf(
       arena,
-      "<style>\n"
+      "<style id=\"gneomutt-core\">\n"
       "  .eml-header-block { font-family: Arial, sans-serif; line-height: 1.6; "
       "margin: 20px; color: #333; }\n"
       "  .eml-header-block h2 { margin-top: 0; }\n"
-      "  .email-body p { margin: 1em 0; }\n"
+      "  /* Force un espacement vertical propre de 1.2em sous chaque "
+      "paragraphe */\n"
+      "  .email-body p, p.MsoNormal, p { margin-top: 0 !important; "
+      "margin-bottom: 1.2em !important; line-height: 1.5 !important; }\n"
       "  .eml-attachments h3 { color: #555; border-bottom: 1px solid #ccc; "
       "padding-bottom: 5px; }\n"
       "  .eml-attachments ul { list-style-type: none; padding-left: 0; }\n"
       "  .eml-attachments li { margin: 5px 0; }\n"
       "  .eml-attachments a { color: #0066cc; text-decoration: none; }\n"
       "  .eml-attachments a:hover { text-decoration: underline; }\n"
+      "</style>\n"
+      "<style id=\"gneomutt-extracted\">\n"
       "  /* Styles extraits de l'e-mail d'origine : */\n%s"
       "</style>\n",
-      css_interne);
+      css_interne ? css_interne : "");
 
   char *full_html = NULL;
   if (is_pure_html) {
