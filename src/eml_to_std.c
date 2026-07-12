@@ -215,6 +215,49 @@ static char *condenser_sauts_lignes(Arena *arena, const char *src) {
   return dst;
 }
 
+static void decoder_entites_html(char *str) {
+  if (!str)
+    return;
+  char *src = str;
+  char *dst = str;
+
+  while (*src) {
+    if (strncmp(src, "&#8217;", 7) == 0) {
+      // Remplacer par l'apostrophe typographique UTF-8 (’)
+      *dst++ = (char)0xE2;
+      *dst++ = (char)0x80;
+      *dst++ = (char)0x99;
+      src += 7;
+    } else if (strncmp(src, "&nbsp;", 6) == 0) {
+      *dst++ = ' ';
+      src += 6;
+    } else if (strncmp(src, "&#160;", 6) == 0) {
+      *dst++ = ' ';
+      src += 6;
+    } else if (*src == '&' && *(src + 1) == '#') {
+      // Décodage générique rudimentaire des entités décimales (ex: &#233; pour
+      // é)
+      char *end;
+      long val = strtol(src + 2, &end, 10);
+      if (*end == ';' && val > 0 && val <= 255) {
+        // Conversion ISO-8859-1 vers UTF-8 pour les caractères < 256
+        if (val < 128) {
+          *dst++ = (char)val;
+        } else {
+          *dst++ = (char)(0xC0 | (val >> 6));
+          *dst++ = (char)(0x80 | (val & 0x3F));
+        }
+        src = end + 1;
+      } else {
+        *dst++ = *src++;
+      }
+    } else {
+      *dst++ = *src++;
+    }
+  }
+  *dst = '\0';
+}
+
 // ============================================================================
 // PARSING GUMBO DIRECT
 // ============================================================================
@@ -230,7 +273,15 @@ static void extraire_gumbo_texte_et_urls(GumboNode *node, ParserContext *ctx,
   if (!node)
     return;
   if (node->type == GUMBO_NODE_TEXT) {
-    arena_string_append(ctx->arena, corps_txt, corps_len, node->v.text.text);
+    // Duplication pour pouvoir modifier la chaîne (node->v.text.text est
+    // constant)
+    char *txt_decode = strdup(node->v.text.text);
+
+    // C'est ICI qu'on appelle la fonction (vérifiez bien l'orthographe exacte)
+    decoder_entites_html(txt_decode);
+
+    arena_string_append(ctx->arena, corps_txt, corps_len, txt_decode);
+    free(txt_decode);
     return;
   }
   if (node->type != GUMBO_NODE_ELEMENT)
@@ -372,14 +423,18 @@ int main(int argc, char *argv[]) {
                        .temp_eml_text = arena_strdup(arena, ""),
                        .arena = arena};
 
-  // ============================================================================
-  // DEBUT DE LA ZONE MODIFIÉE
-  // ============================================================================
-  int is_eml = (strstr(input_buf, "From:") != NULL || strstr(input_buf, "MIME-Version:") != NULL);
+  // Détection du format (EML complet si From: ou MIME-Version: présents)
+  int is_eml = (strstr(input_buf, "From:") != NULL ||
+                strstr(input_buf, "MIME-Version:") != NULL);
+  const char *html_to_parse = NULL;
+
+  // On initialise GMime dans tous les cas pour profiter de ses filtres iconv
+  // performants
+  g_mime_init();
 
   if (is_eml) {
-    g_mime_init();
-    GMimeStream *stream = g_mime_stream_mem_new_with_buffer(input_buf, input_len);
+    GMimeStream *stream =
+        g_mime_stream_mem_new_with_buffer(input_buf, input_len);
     GMimeParser *parser = g_mime_parser_new_with_stream(stream);
     GMimeMessage *message = g_mime_parser_construct_message(parser, NULL);
 
@@ -389,29 +444,63 @@ int main(int argc, char *argv[]) {
     }
     g_object_unref(parser);
     g_object_unref(stream);
-    g_mime_shutdown();
+
+    if (ctx.temp_eml_text && strlen(ctx.temp_eml_text) > 0) {
+      html_to_parse = ctx.temp_eml_text;
+    }
+  } else {
+    // Cas du fichier HTML brut (ex: neomutt_debug.eml qui est du pur HTML en
+    // ISO-8859-1)
+    const char *charset_ptr = strstr(input_buf, "charset=");
+    const char *detected_charset = "UTF-8"; // Valeur par défaut de secours
+
+    if (charset_ptr) {
+      if (strncasecmp(charset_ptr + 8, "iso-8859", 8) == 0 ||
+          strncasecmp(charset_ptr + 9, "iso-8859", 8) == 0) {
+        detected_charset = "ISO-8859-1";
+      } else if (strncasecmp(charset_ptr + 8, "windows-1252", 12) == 0) {
+        detected_charset = "WINDOWS-1252";
+      }
+    }
+
+    // Extraction et conversion à la volée de l'ISO vers de l'UTF-8 standard
+    GMimeStream *mem_stream = g_mime_stream_mem_new();
+    GMimeStream *filter_stream = g_mime_stream_filter_new(mem_stream);
+    GMimeFilter *filter = g_mime_filter_charset_new(detected_charset, "UTF-8");
+
+    g_mime_stream_filter_add(GMIME_STREAM_FILTER(filter_stream), filter);
+    g_object_unref(filter);
+
+    g_mime_stream_write(filter_stream, input_buf, input_len);
+    g_mime_stream_flush(filter_stream);
+
+    GByteArray *buffer = GMIME_STREAM_MEM(mem_stream)->buffer;
+    char *utf8_html = arena_alloc(arena, buffer->len + 1);
+    if (utf8_html) {
+      memcpy(utf8_html, buffer->data, buffer->len);
+      utf8_html[buffer->len] = '\0';
+    }
+
+    g_object_unref(filter_stream);
+    g_object_unref(mem_stream);
+
+    html_to_parse = utf8_html;
   }
 
-  // Choix de la source HTML : soit l'extraction GMime, soit le buffer brut
-  const char *html_to_parse = NULL;
-  if (is_eml && ctx.temp_eml_text && strlen(ctx.temp_eml_text) > 0) {
-    html_to_parse = ctx.temp_eml_text;
-  } else if (!is_eml) {
-    html_to_parse = input_buf;
-  }
-
+  // Envoi du flux UTF-8 nettoyé à Gumbo pour extraction du texte
   if (html_to_parse) {
     GumboOutput *gumbo_out = gumbo_parse(html_to_parse);
     if (gumbo_out) {
-      extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final, &corps_final_len);
+      extraire_gumbo_texte_et_urls(gumbo_out->root, &ctx, &corps_final,
+                                   &corps_final_len);
       gumbo_destroy_output(&kGumboDefaultOptions, gumbo_out);
     }
   }
-  // ============================================================================
-  // FIN DE LA ZONE MODIFIÉE
-  // ============================================================================
 
-  // Application des nettoyages de mise en page (Espaces décalés + Sauts excessifs)
+  g_mime_shutdown();
+
+  // Application des nettoyages de mise en page (Espaces décalés + Sauts
+  // excessifs)
   if (corps_final_len > 0) {
     corps_final = nettoyer_espaces_texte(arena, corps_final);
     corps_final = condenser_sauts_lignes(arena, corps_final);
