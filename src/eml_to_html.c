@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #define PROGRAMME_NAME "eml_to_html"
+#define FILENAME_JSON "emldata.json"
 
 // ============================================================================
 // ENGINE ET CONVERTISSEUR D'ESPACES UNICODE
@@ -129,6 +130,9 @@ typedef struct {
   size_t text_len;
   char *attachments_html;
   size_t attach_len;
+  char *
+      attachments_json; // <-- AJOUT : Pour accumuler le JSON des pièces jointes
+  size_t attach_json_len; // <-- AJOUT
   GHashTable *inline_images;
   const char *folder_name;
   const char *final_assets_dir;
@@ -153,7 +157,9 @@ void export_metadata_json(Arena *arena, const char *msg_id, const char *subject,
                           const char *from_str, const char *to_str,
                           const char *cc_str, const char *bcc_str,
                           const char *raw_date, const char *in_reply_to,
-                          const char *references, const char *output_html_path);
+                          const char *references, const char *html_body,
+                          const char *attachments_json_array,
+                          const char *output_html_path);
 
 static char *generate_headers_html(Arena *arena, const char *french_date,
                                    const char *from_str, const char *to_str,
@@ -165,14 +171,15 @@ static char *generate_headers_html(Arena *arena, const char *french_date,
 static char *parse_email_date_to_french(Arena *arena, GMimeMessage *message);
 static char *generer_titre_page(Arena *arena, GMimeMessage *message);
 
+static void replace_cid_references(Arena *arena, char **html, size_t *html_len,
+                                   const char *cid, const char *local_path);
+
 void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
                                   GMimeParser *parser,
-                                  const char *output_html_path,
                                   EmailHeaders *out_headers);
 
 void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
                                   GMimeParser *parser,
-                                  const char *output_html_path,
                                   EmailHeaders *out_headers) {
   if (!arena || !stream || !parser || !out_headers)
     return;
@@ -209,15 +216,10 @@ void extraire_et_exporter_headers(Arena *arena, GMimeStream *stream,
       g_mime_object_get_header(GMIME_OBJECT(message), "In-Reply-To");
   const char *references =
       g_mime_object_get_header(GMIME_OBJECT(message), "References");
-  const char *raw_date =
-      g_mime_object_get_header(GMIME_OBJECT(message), "Date");
 
   char *french_date = parse_email_date_to_french(arena, message);
 
-  export_metadata_json(arena, msg_id, subject, out_headers->from_str,
-                       out_headers->to_str, out_headers->cc_str,
-                       out_headers->bcc_str, raw_date, in_reply_to, references,
-                       output_html_path);
+  // --- L'ANCIEN APPEL À export_metadata_json A ÉTÉ SUPPRIMÉ ICI ---
 
   out_headers->safe_page_title = generer_titre_page(arena, message);
   out_headers->headers_html = generate_headers_html(
@@ -822,27 +824,19 @@ void export_metadata_json(Arena *arena, const char *msg_id, const char *subject,
                           const char *from_str, const char *to_str,
                           const char *cc_str, const char *bcc_str,
                           const char *raw_date, const char *in_reply_to,
-                          const char *references,
+                          const char *references, const char *html_body,
+                          const char *attachments_json_array,
                           const char *output_html_path) {
   if (!arena || !output_html_path)
     return;
-
-  const char *val_msg_id = msg_id ? msg_id : "";
-  const char *val_subject = subject ? subject : "";
-  const char *val_from = from_str ? from_str : "";
-  const char *val_to = to_str ? to_str : "";
-  const char *val_cc = cc_str ? cc_str : "";
-  const char *val_bcc = bcc_str ? bcc_str : "";
-  const char *val_date = raw_date ? raw_date : "";
-  const char *val_in_reply_to = in_reply_to ? in_reply_to : "";
-  const char *val_references = references ? references : "";
 
   char *path_copy = arena_strdup(arena, output_html_path);
   char *dossier_parent = dirname(path_copy);
 
   char output_json_path[1024];
-  snprintf(output_json_path, sizeof(output_json_path), "%s/headers.json",
-           dossier_parent);
+  // Modification du nom du fichier ici : emldata.json
+  snprintf(output_json_path, sizeof(output_json_path), "%s/%s", dossier_parent,
+           FILENAME_JSON);
 
   FILE *f_json = fopen(output_json_path, "wb");
   if (!f_json) {
@@ -851,15 +845,16 @@ void export_metadata_json(Arena *arena, const char *msg_id, const char *subject,
     return;
   }
 
-  char *safe_msg_id = json_escape(arena, val_msg_id);
-  char *safe_subject = json_escape(arena, val_subject);
-  char *safe_from = json_escape(arena, val_from);
-  char *safe_to = json_escape(arena, val_to);
-  char *safe_cc = json_escape(arena, val_cc);
-  char *safe_bcc = json_escape(arena, val_bcc);
-  char *safe_date = json_escape(arena, val_date);
-  char *safe_in_reply_to = json_escape(arena, val_in_reply_to);
-  char *safe_references = json_escape(arena, val_references);
+  char *safe_msg_id = json_escape(arena, msg_id ? msg_id : "");
+  char *safe_subject = json_escape(arena, subject ? subject : "");
+  char *safe_from = json_escape(arena, from_str ? from_str : "");
+  char *safe_to = json_escape(arena, to_str ? to_str : "");
+  char *safe_cc = json_escape(arena, cc_str ? cc_str : "");
+  char *safe_bcc = json_escape(arena, bcc_str ? bcc_str : "");
+  char *safe_date = json_escape(arena, raw_date ? raw_date : "");
+  char *safe_in_reply_to = json_escape(arena, in_reply_to ? in_reply_to : "");
+  char *safe_references = json_escape(arena, references ? references : "");
+  char *safe_body = json_escape(arena, html_body ? html_body : "");
 
   fprintf(f_json, "{\n");
   fprintf(f_json, "  \"Message-ID\": \"%s\",\n", safe_msg_id);
@@ -870,12 +865,47 @@ void export_metadata_json(Arena *arena, const char *msg_id, const char *subject,
   fprintf(f_json, "  \"Bcc\": \"%s\",\n", safe_bcc);
   fprintf(f_json, "  \"Date\": \"%s\",\n", safe_date);
   fprintf(f_json, "  \"In-Reply-To\": \"%s\",\n", safe_in_reply_to);
-  fprintf(f_json, "  \"References\": \"%s\"\n", safe_references);
+  fprintf(f_json, "  \"References\": \"%s\",\n", safe_references);
+  fprintf(f_json, "  \"Body_HTML\": \"%s\",\n", safe_body);
+
+  // Si aucune pièce jointe, on met un tableau vide [], sinon on met la chaîne
+  // construite
+  fprintf(f_json, "  \"Attachments\": %s\n",
+          (attachments_json_array && strlen(attachments_json_array) > 0)
+              ? attachments_json_array
+              : "[]");
   fprintf(f_json, "}\n");
 
   fclose(f_json);
-  printf("All raw headers exported successfully to JSON: %s\n",
+  printf("All email data exported successfully to JSON: %s\n",
          output_json_path);
+}
+
+static void replace_cid_references(Arena *arena, char **html, size_t *html_len,
+                                   const char *cid, const char *local_path) {
+  if (!html || !*html || !cid || !local_path)
+    return;
+
+  char target[512];
+  snprintf(target, sizeof(target), "src=\"cid:%s\"", cid);
+  char replacement[512];
+  snprintf(replacement, sizeof(replacement), "src=\"%s\"", local_path);
+
+  char *pos;
+  while ((pos = strstr(*html, target)) != NULL) {
+    size_t offset = pos - *html;
+    size_t target_len = strlen(target);
+    size_t rep_len = strlen(replacement);
+    size_t tail_len = strlen(pos + target_len);
+
+    char *new_html = arena_alloc(arena, offset + rep_len + tail_len + 1);
+    memcpy(new_html, *html, offset);
+    memcpy(new_html + offset, replacement, rep_len);
+    memcpy(new_html + offset + rep_len, pos + target_len, tail_len + 1);
+
+    *html = new_html;
+    *html_len = offset + rep_len + tail_len;
+  }
 }
 
 static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
@@ -934,6 +964,7 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
       }
     }
 
+    // --- 1. TRAITEMENT SPÉCIFIQUE HTML POUR CHAQUE TYPE DE PIÈCE ---
     const char *cid = g_mime_object_get_header(part, "Content-ID");
     if (cid && disposition && strcasecmp(disposition, "inline") == 0) {
       char *cid_clean = arena_strdup(ctx->arena, cid);
@@ -956,33 +987,26 @@ static void process_mime_part(G_GNUC_UNUSED GMimeObject *parent,
                                  "<li><a href=\"%s\" download>%s</a></li>\n",
                                  safe_relative_path, safe_filename);
     }
-  }
-}
 
-static void replace_cid_references(Arena *arena, char **html, size_t *html_len,
-                                   const char *cid, const char *local_path) {
-  if (!html || !*html || !cid || !local_path)
-    return;
+    // --- 2. TRAITEMENT GLOBAL POUR LE JSON (Exécuté pour TOUS les fichiers)
+    // ---
+    char *json_safe_filename = json_escape(ctx->arena, filename);
+    char *json_safe_path = json_escape(ctx->arena, relative_filepath);
 
-  char target[512];
-  snprintf(target, sizeof(target), "src=\"cid:%s\"", cid);
-  char replacement[512];
-  snprintf(replacement, sizeof(replacement), "src=\"%s\"", local_path);
+    if (ctx->attach_json_len == 0) {
+      // Premier élément du tableau JSON
+      arena_string_append(ctx->arena, &ctx->attachments_json,
+                          &ctx->attach_json_len, "[\n");
+    } else {
+      // Éléments suivants, on ajoute une virgule de séparation
+      arena_string_append(ctx->arena, &ctx->attachments_json,
+                          &ctx->attach_json_len, ",\n");
+    }
 
-  char *pos;
-  while ((pos = strstr(*html, target)) != NULL) {
-    size_t offset = pos - *html;
-    size_t target_len = strlen(target);
-    size_t rep_len = strlen(replacement);
-    size_t tail_len = strlen(pos + target_len);
-
-    char *new_html = arena_alloc(arena, offset + rep_len + tail_len + 1);
-    memcpy(new_html, *html, offset);
-    memcpy(new_html + offset, replacement, rep_len);
-    memcpy(new_html + offset + rep_len, pos + target_len, tail_len + 1);
-
-    *html = new_html;
-    *html_len = offset + rep_len + tail_len;
+    arena_string_append_printf(
+        ctx->arena, &ctx->attachments_json, &ctx->attach_json_len,
+        "    {\n      \"filename\": \"%s\",\n      \"path\": \"%s\"\n    }",
+        json_safe_filename, json_safe_path);
   }
 }
 
@@ -1313,7 +1337,7 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
   GMimeParser *parser = g_mime_parser_new();
   EmailHeaders hdrs = {0};
 
-  extraire_et_exporter_headers(arena, stream, parser, output_html_path, &hdrs);
+  extraire_et_exporter_headers(arena, stream, parser, &hdrs);
 
   ParserContext ctx = {.html_content = arena_strdup(arena, ""),
                        .html_len = 0,
@@ -1321,6 +1345,8 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
                        .text_len = 0,
                        .attachments_html = arena_strdup(arena, ""),
                        .attach_len = 0,
+                       .attachments_json = arena_strdup(arena, ""),
+                       .attach_json_len = 0,
                        .inline_images = g_hash_table_new_full(
                            g_str_hash, g_str_equal, g_free, g_free),
                        .folder_name = folder_name,
@@ -1382,6 +1408,28 @@ void eml_to_html(const char *eml_path, const char *output_html_path,
     arena_destroy(arena);
     return;
   }
+
+  // Fermeture du tableau JSON des pièces jointes s'il contient des éléments
+  if (ctx.attach_json_len > 0) {
+    arena_string_append(arena, &ctx.attachments_json, &ctx.attach_json_len,
+                        "\n  ]");
+  }
+
+  // Extraction des en-têtes bruts nécessaires pour l'export JSON final
+  const char *msg_id = g_mime_message_get_message_id(hdrs.message);
+  const char *in_reply_to =
+      g_mime_object_get_header(GMIME_OBJECT(hdrs.message), "In-Reply-To");
+  const char *references =
+      g_mime_object_get_header(GMIME_OBJECT(hdrs.message), "References");
+  const char *raw_date =
+      g_mime_object_get_header(GMIME_OBJECT(hdrs.message), "Date");
+
+  // Appel final de l'exportateur avec le Body HTML et le JSON des pièces
+  // jointes
+  export_metadata_json(arena, msg_id, hdrs.subject, hdrs.from_str, hdrs.to_str,
+                       hdrs.cc_str, hdrs.bcc_str, raw_date, in_reply_to,
+                       references, full_html, ctx.attachments_json,
+                       output_html_path);
 
   GumboOutput *gumbo_out = gumbo_parse(full_html);
   nettoyer_arbre(gumbo_out->root);

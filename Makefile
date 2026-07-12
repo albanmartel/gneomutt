@@ -1,5 +1,5 @@
 TARGET = gneomutt
-TOOLS = eml_to_html eml_to_txt eml_to_std
+TOOLS = eml_to_html eml_to_txt eml_to_std eml_to_html_reply
 CC = clang
 # On passe en -O3 pour une optimisation maximale
 CFLAGS = -Wall -Wextra -O3
@@ -11,8 +11,8 @@ VTE_PKG = $(shell pkg-config --list-all | grep vte | cut -d' ' -f1 | head -n 1)
 WEBKIT_PKG = $(shell pkg-config --list-all | grep webkit2gtk | cut -d' ' -f1 | head -n 1)
 GMIME_PKG = gmime-3.0
 
-# Liste consolidée
-PKGS = $(GTK_PKG) $(VTE_PKG) $(WEBKIT_PKG)
+# Liste consolidée (Ajout de json-glib-1.0)
+PKGS = $(GTK_PKG) $(VTE_PKG) $(WEBKIT_PKG) json-glib-1.0
 
 # Séparation des drapeaux récupérés dynamiquement par PKGS
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
@@ -72,6 +72,10 @@ eml_to_txt: src/eml_to_txt.c
 # Règle de compilation spécifique pour eml_to_html
 eml_to_html: src/eml_to_html.c
 	$(CC) $(HTML_CFLAGS) src/eml_to_html.c -o eml_to_html $(HTML_LIBS)
+	
+# Règle de compilation spécifique pour eml_to_html_reply
+eml_to_html_reply: src/eml_to_html_reply.c
+	$(CC) $(CFLAGS) src/eml_to_html_reply.c -o eml_to_html_reply $(LDFLAGS)
 
 # Vérifie si tous les outils nécessaires sont installés
 check-deps:
@@ -91,6 +95,7 @@ debug: clean
 	$(CC) $(HTML_CFLAGS) -g -O0 src/eml_to_html.c -o eml_to_html $(HTML_LIBS)
 	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_std.c -o eml_to_std $(TOOL_LIBS)
 	$(CC) $(TOOL_CFLAGS) -g -O0 src/eml_to_txt.c -o eml_to_txt $(TOOL_LIBS)
+	$(CC) $(CFLAGS) -g -O0 src/eml_to_html_reply.c -o eml_to_html_reply $(LDFLAGS)
 	@echo "======================================================="
 	@echo "       Mode Debug activé avec succès (-g -O0)          "
 	@echo "======================================================="
@@ -126,6 +131,7 @@ install: all
 	sudo install -Dm755 eml_to_html $(DESTDIR)$(BINDIR)/eml_to_html
 	sudo install -Dm755 eml_to_txt $(DESTDIR)$(BINDIR)/eml_to_txt
 	sudo install -Dm755 eml_to_std $(DESTDIR)$(BINDIR)/eml_to_std
+	sudo install -Dm755 eml_to_html_reply $(DESTDIR)$(BINDIR)/eml_to_html_reply
 	
 # 2. Installation du raccourci de bureau
 	sudo install -Dm644 $(DATADIR)/gneomutt.desktop $(DESTDIR)$(APPDIR)/$(TARGET).desktop
@@ -150,6 +156,7 @@ uninstall:
 	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_txt
 	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_std
 	sudo rm -f $(DESTDIR)$(APPDIR)/$(TARGET).desktop
+	sudo rm -f $(DESTDIR)$(BINDIR)/eml_to_html_reply
 	
 # Supprime l'icône SVG
 	sudo rm -f $(DESTDIR)$(SYSTEM_ICONDIR)/scalable/apps/$(TARGET).svg
